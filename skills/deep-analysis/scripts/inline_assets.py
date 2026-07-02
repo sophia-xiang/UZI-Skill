@@ -8,6 +8,7 @@ Usage: python scripts/inline_assets.py {ticker}
 from __future__ import annotations
 
 import base64
+import os
 import re
 import sys
 from datetime import datetime
@@ -16,10 +17,10 @@ from pathlib import Path
 
 def main(ticker: str) -> Path:
     date = datetime.now().strftime("%Y%m%d")
-    report_dir = Path("reports") / f"{ticker}_{date}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    report_dir = _reports_root / f"{ticker}_{date}"
     if not report_dir.exists():
-        # try any matching dir
-        candidates = list(Path("reports").glob(f"{ticker}_*"))
+        candidates = list(_reports_root.glob(f"{ticker}_*"))
         if not candidates:
             raise FileNotFoundError(f"No report dir for {ticker}")
         report_dir = sorted(candidates)[-1]

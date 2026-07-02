@@ -80,6 +80,9 @@ def _load_dotenv():
 
 _load_dotenv()
 
+os.environ.setdefault("UZI_REPORTS_DIR", "E:/uzi-reports")
+os.environ.setdefault("UZI_NO_PNG", "1")
+
 
 def _get_version() -> str:
     """v2.6 · Read version from .claude-plugin/plugin.json so banner stays in sync."""
@@ -554,12 +557,12 @@ def main():
     from lib.market_router import parse_ticker
     ti = parse_ticker(args.ticker)
     date = datetime.now().strftime("%Y%m%d")
-    report_dir = SCRIPTS_DIR / "reports" / f"{ti.full}_{date}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    report_dir = _reports_root / f"{ti.full}_{date}"
     standalone = report_dir / "full-report-standalone.html"
 
     if not standalone.exists():
-        # 尝试找最新的报告
-        reports_root = SCRIPTS_DIR / "reports"
+        reports_root = _reports_root
         if reports_root.exists():
             dirs = sorted(reports_root.glob(f"{ti.full}_*"), reverse=True)
             for d in dirs:

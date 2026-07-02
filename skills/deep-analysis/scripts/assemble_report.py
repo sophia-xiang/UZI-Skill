@@ -6,6 +6,7 @@ Output: reports/{ticker}_{YYYYMMDD}/full-report.html
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -583,7 +584,8 @@ def assemble(ticker: str) -> Path:
     )
 
     date = datetime.now().strftime("%Y%m%d")
-    out_dir = Path("reports") / f"{ticker}_{date}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    out_dir = _reports_root / f"{ticker}_{date}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "full-report.html"
     out_file.write_text(template, encoding="utf-8")

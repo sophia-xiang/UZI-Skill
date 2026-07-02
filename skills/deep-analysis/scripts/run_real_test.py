@@ -746,18 +746,21 @@ def stage2(ticker: str) -> str:
     from inline_assets import main as inline_main
     standalone = inline_main(ti.full)
 
-    try:
-        from render_share_card import main as render_sc
-        render_sc(ti.full)
-        print(f"  ✓ 朋友圈分享卡 PNG")
-    except Exception as e:
-        print(f"  ⚠️ 分享卡跳过: {e}")
-    try:
-        from render_war_report import main as render_wr
-        render_wr(ti.full)
-        print(f"  ✓ 战报横图 PNG")
-    except Exception as e:
-        print(f"  ⚠️ 战报跳过: {e}")
+    if os.environ.get("UZI_NO_PNG") != "1":
+        try:
+            from render_share_card import main as render_sc
+            render_sc(ti.full)
+            print(f"  ✓ 朋友圈分享卡 PNG")
+        except Exception as e:
+            print(f"  ⚠️ 分享卡跳过: {e}")
+        try:
+            from render_war_report import main as render_wr
+            render_wr(ti.full)
+            print(f"  ✓ 战报横图 PNG")
+        except Exception as e:
+            print(f"  ⚠️ 战报跳过: {e}")
+    else:
+        print(f"  ⏭️ PNG 输出已禁用 (UZI_NO_PNG=1)")
 
     standalone_path = Path(standalone).resolve()
     assert standalone_path.exists() and standalone_path.stat().st_size > 10000, \

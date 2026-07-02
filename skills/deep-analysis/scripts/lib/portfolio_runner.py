@@ -376,7 +376,8 @@ def run_portfolio(
 
     date = datetime.now().strftime("%Y%m%d")
     safe_name = name.replace(" ", "_").replace("/", "_")
-    out_dir = SCRIPTS_DIR / "reports" / f"portfolio_{safe_name}_{date}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    out_dir = _reports_root / f"portfolio_{safe_name}_{date}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "index.html"
     out_file.write_text(_render_html(name, metrics_list, health, depth), encoding="utf-8")

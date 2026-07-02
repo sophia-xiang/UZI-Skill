@@ -899,8 +899,7 @@ stage2() 的 `generate_synthesis()` 会自动读取 agent_analysis.json 并合�
 ```bash
 python scripts/assemble_report.py {ticker}
 python scripts/inline_assets.py {ticker}      # 生成自包含 HTML
-python scripts/render_share_card.py {ticker}  # 朋友圈 PNG
-python scripts/render_war_report.py {ticker}  # 战报 PNG
+# PNG 输出已禁用 (UZI_NO_PNG=1)，如需恢复取消该环境变量
 ```
 
 ### 🧠 你的金句审查

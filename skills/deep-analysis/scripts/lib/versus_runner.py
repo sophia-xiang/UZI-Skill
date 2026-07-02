@@ -424,7 +424,8 @@ def run_versus(tickers: list[str], *, depth: str = "lite", auto_open: bool = Tru
     # 输出 HTML
     safe_keys = "_vs_".join(m["ticker"].replace(".", "_") for m in metrics)
     date = datetime.now().strftime("%Y%m%d")
-    out_dir = SCRIPTS_DIR / "reports" / f"versus_{safe_keys}_{date}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    out_dir = _reports_root / f"versus_{safe_keys}_{date}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "index.html"
     out_file.write_text(_render_html(metrics, depth), encoding="utf-8")

@@ -185,7 +185,8 @@ def _generate_summary_html(
     failed: list[dict],
 ) -> Path:
     """聚合 HTML 报告 · 索引页链接所有子报告."""
-    out_dir = Path("reports") / f"{fund_ticker}_holdings_{datetime.now().strftime('%Y%m%d')}"
+    _reports_root = Path(os.environ.get("UZI_REPORTS_DIR", "E:/uzi-reports"))
+    out_dir = _reports_root / f"{fund_ticker}_holdings_{datetime.now().strftime('%Y%m%d')}"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "fund-holdings-summary.html"
 
