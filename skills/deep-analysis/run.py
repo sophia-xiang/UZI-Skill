@@ -38,6 +38,12 @@ if sys.platform == "win32":
         pass
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
+# ─── 强制直连，不走代理（国内财经 API 走代理会失败）───
+os.environ['NO_PROXY'] = '*'
+os.environ['no_proxy'] = '*'
+for _k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
+    os.environ.pop(_k, None)
+
 # ─── 路径设置（v3.3.1 · 兼容 Hermes layout）───
 # run.py 可能出现在两个位置：
 #   1) repo 根目录（Claude Code / Codex / Cursor / dev）：SCRIPTS_DIR = ROOT/skills/deep-analysis/scripts
