@@ -86,7 +86,7 @@ def get_provider_chain(dim: str, market: str = "A") -> list[Provider]:
     优先级 = UZI_PROVIDERS_<DIM> env （逗号分隔 id）> 内置默认顺序
     默认顺序：akshare → efinance → tushare → baostock
     """
-    default_order = ["akshare", "efinance", "tushare", "baostock"]
+    default_order = ["wind", "akshare", "efinance", "tushare", "baostock"]
     env_key = f"UZI_PROVIDERS_{dim.upper()}"
     env_val = os.environ.get(env_key)
     if env_val:
@@ -173,6 +173,10 @@ def health_check() -> dict[str, dict]:
 # Auto-register built-in providers on import
 def _auto_register():
     """import 时自动装所有内置 providers（失败的静默跳过）."""
+    try:
+        from . import wind_provider  # noqa
+    except Exception:
+        pass
     try:
         from . import akshare_provider  # noqa
     except Exception:
