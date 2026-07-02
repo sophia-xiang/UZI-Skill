@@ -154,7 +154,7 @@ def run_fetcher(module_name: str, args: tuple) -> dict:
         return {"data": {}, "source": module_name, "fallback": True, "error": f"{type(e).__name__}: {e}"}
 
 
-def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> dict:
+def collect_raw_data(ticker: str, max_workers: int = 12, resume: bool = True) -> dict:
     """Parallel fetcher execution via ThreadPoolExecutor.
 
     Strategy: run fetch_basic first (others depend on industry etc), then
@@ -284,7 +284,11 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
             others.append((m, d, a))
     if skipped_cached:
         print(f"  [resume] 跳过 {len(skipped_cached)} 个已缓存维度: {', '.join(skipped_cached[:5])}{'...' if len(skipped_cached) > 5 else ''}")
-    print(f"  [wave 2] {len(others)}/{len(all_others)} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)...")
+
+    # bonus fetchers (fund_holders, similar_stocks) merged into Wave 2
+    others.append(("fetch_fund_holders", "_bonus_fund_managers", lambda _t, _d: (ticker,)))
+    others.append(("fetch_similar_stocks", "_bonus_similar_stocks", lambda _t, _d: (ticker, 4)))
+    print(f"  [wave 2] {len(others)}/{len(all_others) + 2} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)...")
 
     # 长尾 fetcher 给更长 timeout（拉研报 / 拉公告 通常较慢）
     PER_FETCHER_TIMEOUT_OVERRIDES = {
@@ -292,6 +296,12 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
         "1_financials": 150,  # 多张财报合并
         "10_valuation": 150,  # 历史估值分位计算
         "15_events": 120,     # 公告 + web search
+        "_bonus_fund_managers": 120,
+        "_bonus_similar_stocks": 90,
+    }
+    _BONUS_KEY_MAP = {
+        "_bonus_fund_managers": ("fund_managers", lambda r: ((r.get("data") or {}).get("fund_managers", []))),
+        "_bonus_similar_stocks": ("similar_stocks", lambda r: ((r.get("data") or {}).get("similar_stocks", []))),
     }
     DEFAULT_PER_FETCHER_TIMEOUT = 90
 
@@ -324,33 +334,51 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
                 fetcher_timeout = PER_FETCHER_TIMEOUT_OVERRIDES.get(dim_key_pending, DEFAULT_PER_FETCHER_TIMEOUT)
                 try:
                     dim_key, mod_name, result, elapsed = fut.result(timeout=fetcher_timeout)
-                    dims[dim_key] = result
+                    if dim_key in _BONUS_KEY_MAP:
+                        raw_key, extractor = _BONUS_KEY_MAP[dim_key]
+                        raw[raw_key] = extractor(result) if isinstance(result, dict) else []
+                        err = result.get("error") if isinstance(result, dict) else None
+                        n = len(raw[raw_key]) if isinstance(raw[raw_key], list) else "n/a"
+                        status = "✗" if err else "✓"
+                        print(f"    {status} {raw_key:18} ({elapsed:5.1f}s) [{n}]")
+                    else:
+                        dims[dim_key] = result
                     err = result.get("error") if isinstance(result, dict) else None
                     has_data = bool(result.get("data")) if isinstance(result, dict) else False
                     status = "✗" if err else ("✓" if has_data else "·")
                     tail = f" {err[:60]}" if err else ""
-                    print(f"    {status} {dim_key:18} ({elapsed:5.1f}s){tail}")
+                    if dim_key not in _BONUS_KEY_MAP:
+                        print(f"    {status} {dim_key:18} ({elapsed:5.1f}s){tail}")
                     completed_count += 1
                     if completed_count % INCREMENTAL_SAVE_EVERY == 0:
                         _persist_progress()
                 except _FutureTimeout:
-                    # 单 fetcher 超时 — 标记为超时维度，不影响其他 fetcher
-                    dims[dim_key_pending] = {
-                        "data": {},
-                        "_timeout": True,
-                        "fallback": True,
-                        "error": f"fetcher timeout > {fetcher_timeout}s",
-                        "source": "timeout"
-                    }
-                    print(f"    ⏱  {dim_key_pending:18} (>{fetcher_timeout}s · TIMEOUT · agent 可补抓)")
+                    if dim_key_pending in _BONUS_KEY_MAP:
+                        raw_key, _ = _BONUS_KEY_MAP[dim_key_pending]
+                        raw[raw_key] = []
+                        print(f"    ⏱  {raw_key:18} (>{fetcher_timeout}s · TIMEOUT)")
+                    else:
+                        dims[dim_key_pending] = {
+                            "data": {},
+                            "_timeout": True,
+                            "fallback": True,
+                            "error": f"fetcher timeout > {fetcher_timeout}s",
+                            "source": "timeout"
+                        }
+                        print(f"    ⏱  {dim_key_pending:18} (>{fetcher_timeout}s · TIMEOUT · agent 可补抓)")
                 except Exception as e:
-                    dims[dim_key_pending] = {
-                        "data": {},
-                        "fallback": True,
-                        "error": f"{type(e).__name__}: {str(e)[:120]}",
-                        "source": "crash"
-                    }
-                    print(f"    ✗ {dim_key_pending:18} crash: {type(e).__name__}: {str(e)[:60]}")
+                    if dim_key_pending in _BONUS_KEY_MAP:
+                        raw_key, _ = _BONUS_KEY_MAP[dim_key_pending]
+                        raw[raw_key] = []
+                        print(f"    ✗ {raw_key:18} crash: {type(e).__name__}: {str(e)[:60]}")
+                    else:
+                        dims[dim_key_pending] = {
+                            "data": {},
+                            "fallback": True,
+                            "error": f"{type(e).__name__}: {str(e)[:120]}",
+                            "source": "crash"
+                        }
+                        print(f"    ✗ {dim_key_pending:18} crash: {type(e).__name__}: {str(e)[:60]}")
         except _FutureTimeout:
             # 整体 5 分钟超时 — 记录还没完成的 fetcher
             unfinished = [futures[f] for f in futures if not f.done()]
@@ -372,62 +400,10 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
     # 防止 Ctrl+C / 后续 wave3 crash 时丢失 wave2 的完整状态（包括被标记超时的 fetcher）。
     _persist_progress()
 
-    # ── Wave 3: bonus fetchers (parallel) ──
-    print("  [wave 3] bonus fetchers parallel ...")
-    wave3_start = time.time()
-
-    def _fund_holders():
-        try:
-            import fetch_fund_holders
-            # v2.10.1 · 清单 limit 保持 None（全量列出 649 家），慢在 fetch_fund_holders
-            # 内部已改成"头部 top N 算完整 5Y 业绩，其余只列名字"双层策略。
-            # UZI_FUND_STATS_TOP=N 控制几家算完整业绩（默认 20）。
-            # 用户原问题："基金拉全不是直接检索就行了吗" — 对，清单一次 API 就够，
-            # 过去慢是因为每家都跑 5Y NAV 计算，现在只头部跑，其他点 fund_url 看详情。
-            fh = fetch_fund_holders.main(ticker, limit=None)
-            return ("fund_managers", (fh.get("data") or {}).get("fund_managers", []), None)
-        except Exception as e:
-            return ("fund_managers", [], str(e))
-
-    def _similar_stocks():
-        try:
-            import fetch_similar_stocks
-            ss = fetch_similar_stocks.main(ticker, top_n=4)
-            return ("similar_stocks", (ss.get("data") or {}).get("similar_stocks", []), None)
-        except Exception as e:
-            return ("similar_stocks", [], str(e))
-
-    # v2.6 · wave3 同样加 60s timeout per fetcher（fund_holders 默认抓全量，可能慢）
-    from concurrent.futures import TimeoutError as _FutureTimeout
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        wave3_futures = {pool.submit(_fund_holders): "fund_managers", pool.submit(_similar_stocks): "similar_stocks"}
-        try:
-            for fut in as_completed(wave3_futures, timeout=180):
-                key_pending = wave3_futures[fut]
-                try:
-                    key, val, err = fut.result(timeout=120)
-                    raw[key] = val
-                    status = "✗" if err else "✓"
-                    print(f"    {status} {key}: {len(val) if isinstance(val, list) else 'n/a'}")
-                except _FutureTimeout:
-                    raw[key_pending] = []
-                    print(f"    ⏱  {key_pending} (>120s · TIMEOUT)")
-                except Exception as e:
-                    raw[key_pending] = []
-                    print(f"    ✗ {key_pending} crash: {type(e).__name__}: {str(e)[:60]}")
-        except _FutureTimeout:
-            for f, k in wave3_futures.items():
-                if not f.done() and k not in raw:
-                    raw[k] = []
-            print(f"    ⏱  wave3 overall timeout")
-    wave3_elapsed = time.time() - wave3_start
-    print(f"  [wave 3] done in {wave3_elapsed:.1f}s")
-
     raw["dimensions"] = dims
     total_elapsed = time.time() - t0
-    print(f"\n  Task 1 total: {total_elapsed:.1f}s (wave1 {time.time() - wave1_start:.1f}s + wave2 {wave2_elapsed:.1f}s + wave3 {wave3_elapsed:.1f}s)")
+    print(f"\n  Task 1 total: {total_elapsed:.1f}s (wave1 {time.time() - wave1_start:.1f}s + wave2 {wave2_elapsed:.1f}s)")
 
-    # v2.7.2 · stage1 收尾再 flush 一次，确保 wave3 的 fund_managers / similar_stocks 也已落盘
     try:
         from lib.cache import write_task_output as _write_cache_final
         _write_cache_final(ticker, "raw_data", raw)

@@ -803,27 +803,24 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
     fixed_count = 0
     skipped_full = 0
     failed_count = 0
-    for dim_key, is_empty_fn, query_fn in targets:
+
+    def _fill_one(dim_key, is_empty_fn, query_fn):
         dim = dims.get(dim_key) or {}
         data = dim.get("data") or {}
         try:
             if not is_empty_fn(data):
-                skipped_full += 1
-                continue  # 该维度已有真实数据
+                return (dim_key, "skipped", None)
         except Exception:
-            skipped_full += 1
-            continue
+            return (dim_key, "skipped", None)
 
         query = query_fn()
         text = ""
         source_used = None
 
-        # 优先 MX
         if mx_ok:
             try:
                 r = client.query(query)
                 text = _extract_mx_text(r)
-                # v2.12.1 · 过滤 MX 返回的垃圾数据（"类型；类型"/"抱歉"/重复等）
                 if _is_junk_autofill(text):
                     text = ""
                 if text:
@@ -831,19 +828,17 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
             except Exception:
                 pass
 
-        # 回退 ddgs WebSearch
         if not text and _ws_search:
             try:
                 results = _ws_search(query, max_results=3) or []
-                snippets = []
+                snips = []
                 for r in results[:3]:
                     if isinstance(r, dict):
                         title = (r.get("title") or "").strip()
                         body = (r.get("body") or "").strip()
                         if title or body:
-                            snippets.append(f"{title} — {body[:80]}".strip(" —"))
-                text = "；".join(snippets)[:300]
-                # v2.12.1 · 过滤 ddgs 拼接后的噪音（长度过短 / 模板占位符）
+                            snips.append(f"{title} — {body[:80]}".strip(" —"))
+                text = "；".join(snips)[:300]
                 if _is_junk_autofill(text):
                     text = ""
                 if text:
@@ -856,7 +851,6 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
             data["_autofill"]["query"] = query
             data["_autofill"]["snippet"] = text
             data["_autofill"]["source"] = source_used
-            # 把内容塞到对应字段，方便 _auto_summarize_dim 摘要
             if dim_key == "3_macro":
                 data["rate_cycle"] = (text[:80] + "…") if len(text) > 80 else text
             elif dim_key == "7_industry":
@@ -866,22 +860,38 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
             elif dim_key == "9_futures":
                 data["contract_trend"] = (text[:60] + "…") if len(text) > 60 else text
             elif dim_key == "13_policy":
-                snippets = data.setdefault("snippets", {})
-                snippets.setdefault("policy_dir", []).append({"title": text[:120], "url": "", "source": source_used})
+                snippets_d = data.setdefault("snippets", {})
+                snippets_d.setdefault("policy_dir", []).append({"title": text[:120], "url": "", "source": source_used})
             elif dim_key == "15_events":
                 data["event_timeline"] = [text[:120]]
             dims[dim_key] = {"ticker": ticker, "data": data,
                              "source": (dim.get("source", "") + f"+autofill:{source_used}").lstrip("+"),
                              "fallback": True}
-            fixed_count += 1
-            print(f"   ✓ {dim_key:14s} via {source_used}: {text[:60]}{'…' if len(text)>60 else ''}")
+            return (dim_key, "fixed", f"via {source_used}: {text[:60]}{'…' if len(text)>60 else ''}")
         else:
             data["_autofill_failed"] = {"query": query, "reason": "MX/ddgs 都没有返回内容"}
             dims[dim_key] = {"ticker": ticker, "data": data,
                              "source": (dim.get("source", "") + "+autofill_failed").lstrip("+"),
                              "fallback": True}
-            failed_count += 1
-            print(f"   ⚠️ {dim_key:14s} 兜底失败 · agent 应主动 web search 补抓")
+            return (dim_key, "failed", None)
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = {pool.submit(_fill_one, dk, ef, qf): dk for dk, ef, qf in targets}
+        for fut in as_completed(futs, timeout=30):
+            try:
+                dk, status, detail = fut.result()
+            except Exception:
+                dk = futs[fut]
+                status, detail = "failed", None
+            if status == "fixed":
+                fixed_count += 1
+                print(f"   ✓ {dk:14s} {detail}")
+            elif status == "failed":
+                failed_count += 1
+                print(f"   ⚠️ {dk:14s} 兜底失败 · agent 应主动 web search 补抓")
+            else:
+                skipped_full += 1
 
     print(f"   合计 · 充足 {skipped_full} · 兜底成功 {fixed_count} · 失败 {failed_count}（共 6 维）")
 
