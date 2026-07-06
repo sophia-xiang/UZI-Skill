@@ -1,21 +1,11 @@
 """pipeline.score · Scoring 阶段 · v3.0.0 Phase 6c · 真正接管主干.
 
-### 相比 Phase 6a delegate 的区别
+拆分为 3 个独立阶段供 run_pipeline 按需调用：
+  - score_part2(ticker) → autofill + score_dimensions → dimensions.json
+  - score_part3(ticker) → generate_panel → panel.json（依赖 dimensions.json）
+  - score_part4(ticker) → generate_synthesis → synthesis.json（依赖 dimensions + panel）
 
-Phase 6a 做法：调 `rrt.stage1(ticker)` → stage1 内部 **重新 collect** 数据 + scoring · pipeline
-只是薄包装 · 职责没转移.
-
-Phase 6c 做法：pipeline 已经 collect 完 · 写了 raw_data.json · **只调 rrt 里的纯打分函数**
-(score_dimensions / generate_panel / generate_synthesis / _autofill_qualitative_via_mx) ·
-rrt.stage1 不再被 pipeline 调用 · pipeline 才是真正的主干.
-
-依赖的 legacy 纯函数（无副作用 · 稳定 API）：
-- `rrt.score_dimensions(raw) -> dims_scored`
-- `rrt.generate_panel(dims_scored, raw) -> panel`
-- `rrt.generate_synthesis(raw, dims_scored, panel, agent_analysis=None) -> synthesis`
-- `rrt._autofill_qualitative_via_mx(raw, ticker)` (原地改 raw)
-
-这些函数在 legacy 里也被 stage1 调用 · pipeline 调等价于 stage1 的 scoring 段 · 业务零差别.
+每个阶段只在用户确认后才执行，减少不必要的计算和 token 消耗。
 """
 from __future__ import annotations
 
@@ -23,79 +13,82 @@ import json
 from pathlib import Path
 
 
-def score_from_cache(ticker: str) -> dict:
-    """给定已有 .cache/<ticker>/raw_data.json · 执行 scoring · 落地 dimensions/panel/synthesis.
+def _cache_dir(ticker: str) -> Path:
+    from lib.market_router import parse_ticker
+    ti = parse_ticker(ticker)
+    import run_real_test as rrt
+    return Path(rrt.__file__).parent / ".cache" / ti.full
 
-    流程（纯函数编排 · 不再调 stage1）：
-      1. 读 raw_data.json
-      2. _autofill_qualitative_via_mx · MX API 补齐定性维度（原地改 raw）
-      3. autofill_via_playwright · v2.13 Playwright 兜底（原地改 raw）
-      4. score_dimensions · 22 维打分
-      5. generate_panel · 51 评委投票
-      6. generate_synthesis · DCF/LBO/BCG/Porter
-      7. 写 dimensions.json / panel.json / synthesis.json
-    返回 {"dimensions": ..., "panel": ..., "synthesis": ...}
-    """
+
+def score_part2(ticker: str) -> dict:
+    """Part 2 · autofill 定性维度 + 22 维打分 → dimensions.json."""
     import run_real_test as rrt
     from lib.market_router import parse_ticker
 
     ti = parse_ticker(ticker)
-    cache_dir = Path(rrt.__file__).parent / ".cache" / ti.full
-    raw_path = cache_dir / "raw_data.json"
+    cache = _cache_dir(ticker)
+    raw_path = cache / "raw_data.json"
     if not raw_path.exists():
-        raise FileNotFoundError(
-            f"pipeline.score_from_cache: {raw_path} 不存在 · 必须先跑 pipeline.collect"
-        )
+        raise FileNotFoundError(f"score_part2: {raw_path} 不存在 · 必须先跑 Part 1")
 
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
 
-    # v2.6.1 · MX API 兜底补齐定性维度（原地改 raw · 不 raise）
     try:
         rrt._autofill_qualitative_via_mx(raw, ti.full)
     except Exception as e:
         print(f"   ⚠️ autofill_via_mx 跳过: {type(e).__name__}: {str(e)[:80]}")
 
-    # v2.13 · Playwright 兜底（按 profile 决策 · 默认 lite 不启用）
     try:
         from lib.playwright_fallback import autofill_via_playwright
         autofill_via_playwright(raw, ti.full)
     except Exception as e:
         print(f"   ⚠️ Playwright 兜底跳过: {type(e).__name__}: {str(e)[:80]}")
 
-    # 重新写回 raw_data.json（autofill 已修改）
     raw_path.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
 
-    # 22 维 scoring
     dims_scored = rrt.score_dimensions(raw)
-    (cache_dir / "dimensions.json").write_text(
+    (cache / "dimensions.json").write_text(
         json.dumps(dims_scored, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
+    return dims_scored
 
-    # 51 评委 panel
+
+def score_part3(ticker: str) -> dict:
+    """Part 3 · 65 评委投票 → panel.json（需要 dimensions.json + raw_data.json）."""
+    import run_real_test as rrt
+
+    cache = _cache_dir(ticker)
+    raw = json.loads((cache / "raw_data.json").read_text(encoding="utf-8"))
+    dims_scored = json.loads((cache / "dimensions.json").read_text(encoding="utf-8"))
+
     panel = rrt.generate_panel(dims_scored, raw)
-    (cache_dir / "panel.json").write_text(
+    (cache / "panel.json").write_text(
         json.dumps(panel, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
+    return panel
 
-    # Synthesis（不 merge agent_analysis · stage2/synthesize_and_render 阶段做）
+
+def score_part4(ticker: str) -> dict:
+    """Part 4 前置 · 综合研判 → synthesis.json（需要 raw + dimensions + panel）."""
+    import run_real_test as rrt
+
+    cache = _cache_dir(ticker)
+    raw = json.loads((cache / "raw_data.json").read_text(encoding="utf-8"))
+    dims_scored = json.loads((cache / "dimensions.json").read_text(encoding="utf-8"))
+    panel = json.loads((cache / "panel.json").read_text(encoding="utf-8"))
+
     synthesis = rrt.generate_synthesis(raw, dims_scored, panel, agent_analysis=None)
-    (cache_dir / "synthesis.json").write_text(
+    (cache / "synthesis.json").write_text(
         json.dumps(synthesis, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
-
-    return {
-        "dimensions": dims_scored,
-        "panel": panel,
-        "synthesis": synthesis,
-    }
+    return synthesis
 
 
-def _read_json(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+def score_from_cache(ticker: str) -> dict:
+    """兼容接口 · 一次跑完 Part 2+3+4 synthesis."""
+    dims_scored = score_part2(ticker)
+    panel = score_part3(ticker)
+    synthesis = score_part4(ticker)
+    return {"dimensions": dims_scored, "panel": panel, "synthesis": synthesis}

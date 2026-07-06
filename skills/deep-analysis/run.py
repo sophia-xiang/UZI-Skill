@@ -402,8 +402,9 @@ def main():
     # v2.3 · 先过 stage1，捕获中文名解析失败场景，不静默跑出空报告
     from lib.market_router import is_chinese_name
     if _pipeline_data_only:
-        print("   → Part 1 数据采集已完成 · 等待 agent 确认后续阶段")
-        print(f"   → 数据位于 .cache/{args.ticker}/raw_data.json")
+        print("   → 已完成已确认的阶段 · 后续阶段可按需启动")
+        print(f"   → 缓存位于 .cache/{args.ticker}/")
+        print(f"   → 设置 UZI_AUTO_FULL=1 可一把跑完全部 Part 1-4")
         sys.exit(0)
     elif _pipeline_succeeded:
         print("   → 走 pipeline · skip legacy stage1/stage2")
