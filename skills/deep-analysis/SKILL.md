@@ -38,31 +38,52 @@ metadata:
 5. **矛盾必须呈现，不准和稀泥**：DCF 与 Comps 结论冲突时，**把冲突写进报告**；65 评委分歧大时，**强调分歧本身是信息**。
 6. **Task 1 必须并行执行**（4 个子 agent / wave），串行跑 22 个 fetcher 直接扣分。
 
-### ⛔ HARD-GATE-UPDATE-PROMPT · 新版本提示（v2.14）
+### ⛔ HARD-GATE-ASK-POLICY · 询问最小化（v3.9.1 · 用户明确要求）
 
 <HARD-GATE>
-会话启动 hook 会后台检查 GitHub 最新 release，如果本地版本落后，会在
-`skills/deep-analysis/scripts/.cache/_global/update_prompt.md` 写入完整提示文案。
+用户明确要求："尽可能减少询问次数，尤其是抓取财务数据类的"。以下为铁律，优先级高于本文其它 HARD-GATE 里任何"先问用户 / AskUserQuestion / 等待确认"的措辞——冲突时以本节为准。
 
-**你必须在第一次回应用户前检查这个文件**：
+**A. 默认自动跑、全程静默（数据类 + 建模 + 补数据，绝不询问）**
+- Task 1 / 1.5 / 2：22 维数据采集、机构建模 (DCF/Comps/LBO/…)、维度打分
+- 数据缺口补齐（HARD-GATE-DATAGAPS 的 web_search / 浏览器 / 逻辑推导）
+- 机械自查修复（review_stage_output 循环）
+- 上述全部一口气跑完，中途**不要**问"要不要继续 / 要不要补 X 字段 / 要不要跑下一步 / 要不要重搜"
 
-1. 读 `.cache/_global/update_prompt.md`（不存在 = 无需提示，跳过即可）
-2. 若存在 · 把文件完整内容作为 **第一条消息** 展示给用户
-3. 用 `AskUserQuestion` 或自然语言收集用户回答（y / s / n）
-4. 调用 `python3 -c "from lib.update_check import handle_answer; print(handle_answer('<ans>', '<latest>'))"` 把用户回答写回状态文件 · latest 从提示文案里的版本号提取
-5. 处理完删除 `.cache/_global/update_prompt.md`，这样同一会话不会重复弹
-6. 根据用户选择：
-   - `y` → 告诉用户按 README 安装章节的命令执行（Claude Code: `/plugin update stock-deep-analyzer` · git clone: `cd UZI-Skill && git pull` · Hermes: `hermes skills update wbh604/UZI-Skill/skills/deep-analysis`），然后继续用户原请求
-   - `s` → 直接继续用户原请求（handle_answer 已记 skip 到 cache）
-   - `n` → 直接继续用户原请求
+**B. 唯一一次主动询问 · 大佬 panel（开跑前问一次，仅此一次）**
+- 大佬 panel = 4 部分：① 世纪分歧 (Great Divide) ② 65 评委打分板 ③ 大佬群聊现场 ④ 大佬抄作业（四派买入区间）
+- 在 `collect_panel_bonus()` 采集 + spawn 评委 role-play **之前**，用 `AskUserQuestion` **只问一次**："要不要跑大佬 panel（世纪分歧 / 评委打分 / 群聊 / 抄作业）？"
+  - **要** → 调 `collect_panel_bonus(ticker)` 采集 fund_holders/similar_stocks → spawn sub-agent role-play → 写 agent_analysis.json 的 panel 相关字段 → 出含 panel 的完整报告
+  - **不要** → 跳过这 4 部分，直接用 stage1 数据出报告（22 维深度卡 + 估值建模照常，仅不含 panel 四块）；agent_analysis.json 仍写 dim_commentary（数据驱动），但不写 great_divide_override / panel_insights / buy_zones
+- 问过这一次后，panel 内部 4 部分**不再分别确认**，一次点头全跑完
 
-如果用户没有原请求（首次进入会话），展示完提示后等待用户开始对话。
+**C. 仅在真正上下文不确定时才问（保留）**
+- 股票名有歧义 / 匹配到多只 → 走 HARD-GATE-NAME 选候选
+- 输入是 ETF / 基金 → 走 HARD-GATE-NON-STOCK 选成分股
 
-**绝不能**：
-- ❌ 跳过这个检查直接回应用户的分析请求
-- ❌ 把提示文案改短、改写、合并到其他消息里
-- ❌ 在用户只说 "分析 XX" 时直接开跑不先展示更新提示
+**D. 绝不再主动弹（静默处理）**
+- 版本更新提示：后台静默检查，**绝不** y/s/n 阻断开跑（见下方已降级的 UPDATE-PROMPT）
+- 公网链接 (--remote)：默认不问；仅当用户主动说"手机看 / 发微信 / 不在电脑前"时才加
 </HARD-GATE>
+
+### 版本更新提示（v3.9.1 · 已降级为静默，不再阻断）
+
+会话启动 hook 仍会后台检查 GitHub release，落后时写
+`skills/deep-analysis/scripts/.cache/_global/update_prompt.md`。**但按
+HARD-GATE-ASK-POLICY，绝不用它阻断分析或弹 y/s/n。** 处理方式：
+
+1. 若文件存在，从中提取最新版本号 `<latest>`
+2. **直接继续用户的原始请求**（该开跑就开跑），**不问**
+3. 可选：在本轮回复结尾附一句 `ℹ️ 有新版 v<latest>，需要可 /plugin update stock-deep-analyzer`
+4. 调 `python3 -c "from lib.update_check import handle_answer; print(handle_answer('s', '<latest>'))"`
+   记 skip，并删掉 `update_prompt.md`，避免同会话重复
+5. 若用户**主动**说要更新，才告知 README 的更新命令
+
+<details>
+<summary>（历史版本 v2.14 的 y/s/n 阻断式提示已废弃，保留说明供参考）</summary>
+
+旧逻辑要求"第一次回应用户前必须展示更新提示并收集 y/s/n"——此行为在 v3.9.1 被
+HARD-GATE-ASK-POLICY 取消，因为它在每个有新版的会话都会打断用户。
+</details>
 
 ### ⛔ HARD-GATE-NAME · 股票名纠错（v2.3）
 
@@ -477,19 +498,28 @@ Stage 1 自动完成：Task 1（22 维采集）→ Task 1.5（机构建模）→
 
 ### 你的分析环节（Stage 1 之后、Stage 2 之前）
 
+> ⛔ **先执行 HARD-GATE-ASK-POLICY 的 B 条**：Stage 1 数据已自动跑完（无需询问）。
+> 现在——也是**整个流程唯一一次主动询问**——用 `AskUserQuestion` 问用户：
+> **"要不要跑大佬 panel（世纪分歧 / 65 评委打分 / 大佬群聊 / 大佬抄作业）？"**
+>
+> - **用户要** → 执行下方完整的 panel 流程（collect_panel_bonus + role-play + agent_analysis 全字段），下面的 HARD-GATE 生效。
+> - **用户不要** → 跳过 panel role-play，仅写 dim_commentary（数据驱动定性评语）后直接 stage2 出报告；报告不含 panel 四块，其余 22 维深度卡 + 估值建模照常。此时下面的 HARD-GATE 中第 2/3 步和 panel 相关字段豁免。
+
 <HARD-GATE>
-Do NOT run stage2() until ALL of the following are complete:
+**仅当用户在上面选择了"要大佬 panel"时**，Do NOT run stage2() until ALL of the following are complete:
 1. You have READ .cache/{ticker}/panel.json and reviewed the 52 skeleton scores
 2. You have SPAWNED sub-agents (or personally analyzed) each investor group
 3. You have MERGED agent results back into panel.json with updated headline/reasoning/score
 4. You have WRITTEN agent_analysis.json with dim_commentary (≥5 dimensions) + panel_insights
 5. You have SET agent_reviewed: true in agent_analysis.json
 
-Skipping this step produces a report with mechanical rule-engine output instead of
-genuine investment analysis. The whole point of this plugin is agent-driven judgment.
+Skipping this step (when panel WAS requested) produces a report with mechanical rule-engine
+output instead of genuine investment analysis. The whole point of this plugin is agent-driven judgment.
+
+若用户选择"不要 panel"：只需 READ panel.json 供参考 + 写 dim_commentary + 设 agent_reviewed:true 即可，不必 spawn 评委 sub-agent。
 </HARD-GATE>
 
-核心是：
+核心是（以下为"要大佬 panel"时的完整流程）：
 1. 读 `.cache/{ticker}/panel.json` 中 65 人的骨架分
 2. **Spawn 4 个并行 sub-agent 分组 role-play 投资者**——让他们真正"扮演"巴菲特/赵老哥思考
 3. 用 agent 的判断覆盖 panel.json 中的 headline/reasoning/score
@@ -946,12 +976,10 @@ python run.py <股票代码> --no-browser      # 强制不打开浏览器
 4. 输出公网链接 — 用户手机扫码 / 发微信就能看报告
 5. Ctrl+C 停止服务
 
-**Task 0 可选步骤：询问用户环境**
+**公网链接（--remote）· 默认不问（v3.9.1 · HARD-GATE-ASK-POLICY D 条）**
 
-在开始分析之前，你可以先问用户：
-> "你现在在电脑前吗？如果不在，我可以生成一个公网链接方便手机查看。"
-
-如果用户说不在电脑前 → 加 `--remote` 参数。
+**不要**主动问"你在电脑前吗"。仅当用户**主动**提到"手机看 / 发微信 / 不在电脑前 /
+分享给别人"时，才加 `--remote` 参数生成公网链接。默认直接本地出报告。
 
 ### Codex / 国产模型 自适配（v2.6 论坛 bug 修复）
 

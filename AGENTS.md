@@ -131,15 +131,23 @@ panel_insights / debate_rounds 都限于该派内部分歧。详见 SKILL.md `HA
 
 进入 `skills/deep-analysis/scripts/` 目录，调用 `stage1()` 采集 22 维数据 + 机构建模 + 规则引擎骨架分。
 
-### Step 3 · 你来分析（全量路径必走，不能跳过）
+### Step 3 · 你来分析（大佬 panel · 开跑前问一次）
+
+> ⛔ **询问最小化（v3.9.1）**：Step 2 的数据采集全自动、不询问。大佬 panel（世纪分歧 /
+> 65 评委打分 / 大佬群聊 / 大佬抄作业）是**整个流程唯一一次主动询问**——用
+> `AskUserQuestion` 问一次"要不要跑大佬 panel？"。**要**→执行下面的 HARD-GATE；
+> **不要**→跳过评委 role-play，仅写 dim_commentary 后直接出报告。详见
+> SKILL.md `HARD-GATE-ASK-POLICY`。版本更新提示 / 公网链接一律不主动问。
 
 <HARD-GATE>
-Do NOT proceed to report generation until you have:
+**仅当用户选择"要大佬 panel"时**，Do NOT proceed to report generation until you have:
 1. READ the panel.json skeleton scores
 2. ANALYZED each investor group from their perspective
 3. UPDATED panel.json with your judgments
 4. WRITTEN agent_analysis.json with dim_commentary + panel_insights + overrides
 5. SET agent_reviewed: true in agent_analysis.json
+
+若用户选择"不要 panel"：只需写 dim_commentary + 设 agent_reviewed:true，不必 role-play 评委。
 </HARD-GATE>
 
 ### ⛔ Step 3.0 · Playwright 兜底前置检查（v2.13.5 必走）
