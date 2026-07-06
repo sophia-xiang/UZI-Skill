@@ -598,13 +598,25 @@ def stage1(ticker: str) -> dict:
     write_task_output(ti.full, "dimensions", dims)
     print(f"  基本面得分: {dims['fundamental_score']}/100")
 
-    print("\n🎭 Task 3 · 51 评委规则引擎（骨架分）")
-    panel = generate_panel(dims, raw)
-    write_task_output(ti.full, "panel", panel)
-    sd = panel["signal_distribution"]
-    skip_n = sd.get("skip", 0)
-    active_n = len(panel["investors"]) - skip_n
-    print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
+    # v3.9.1 · 若用户选择"不要大佬 panel"（agent 设 UZI_SKIP_PANEL=1）· 写精简 panel · 跳过规则引擎
+    if os.environ.get("UZI_SKIP_PANEL") == "1":
+        print("\n⏭️  Task 3 · 跳过大佬 panel（UZI_SKIP_PANEL=1 · 精简模式）")
+        panel = {
+            "investors": [],
+            "panel_consensus": 50,
+            "signal_distribution": {},
+            "panel_skipped": True,
+            "panel_skip_reason": "用户选择不跑大佬 panel（世纪分歧/评委打分/群聊/抄作业）",
+        }
+        write_task_output(ti.full, "panel", panel)
+    else:
+        print("\n🎭 Task 3 · 51 评委规则引擎（骨架分）")
+        panel = generate_panel(dims, raw)
+        write_task_output(ti.full, "panel", panel)
+        sd = panel["signal_distribution"]
+        skip_n = sd.get("skip", 0)
+        active_n = len(panel["investors"]) - skip_n
+        print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
 
     features = extract_features(raw, raw.get("dimensions", {}))
 

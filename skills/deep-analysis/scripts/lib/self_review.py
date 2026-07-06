@@ -218,6 +218,9 @@ def check_panel_non_empty(ctx: dict) -> list[Issue]:
     """51 评委不能全是 skip / 评分全 0"""
     issues = []
     panel = ctx.get("panel") or {}
+    # v3.9.1 · 用户主动跳过大佬 panel（精简模式）· 空 panel 是预期行为，不判 critical
+    if panel.get("panel_skipped"):
+        return issues
     investors = panel.get("investors", [])
     if not investors:
         issues.append(Issue(

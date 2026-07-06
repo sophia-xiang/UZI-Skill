@@ -471,7 +471,10 @@ def assemble(ticker: str) -> Path:
     for k, v in replacements.items():
         template = template.replace(k, str(v))
 
-    _has_panel = bool(investors)
+    # v3.9.1 · panel 渲染判断：既要有评委，又不能是"用户主动跳过"（panel_skipped）。
+    # 修复：skill 层选"不要 panel"时 stage1 会写 panel_skipped=True，此处据此走精简模式，
+    # 而非仅凭 investors 是否为空（旧逻辑漏掉了 skip 信号，导致精简选择被忽略）。
+    _has_panel = bool(investors) and not panel.get("panel_skipped")
 
     if _has_panel:
         template = template.replace(
@@ -524,8 +527,11 @@ def assemble(ticker: str) -> Path:
             render_fund_managers(fund_managers),
         )
     else:
-        _skip_note = '<div style="text-align:center;color:#6b7280;padding:40px 0;font-size:14px;">精简模式 · 大佬分析模块已跳过</div>'
-        for marker in ("<!-- INJECT_JURY_SEATS -->", "<!-- INJECT_CHAT_MESSAGES -->",
+        # v3.9.1 · 精简模式：在主 panel 区注入"已跳过"提示（此前 _skip_note 定义了却没用，
+        # 导致跳过 panel 时只留空壳分区、没有任何说明）。其余 panel 标记清空。
+        _skip_note = '<div style="text-align:center;color:#6b7280;padding:40px 0;font-size:14px;">精简模式 · 大佬分析模块已跳过（世纪分歧 / 评委打分 / 大佬群聊 / 大佬抄作业）</div>'
+        template = template.replace("<!-- INJECT_JURY_SEATS -->", _skip_note)
+        for marker in ("<!-- INJECT_CHAT_MESSAGES -->",
                        "<!-- INJECT_VOTE_BARS -->", "<!-- INJECT_TOP3_BULLS -->",
                        "<!-- INJECT_TOP3_BEARS -->", "<!-- INJECT_PANEL_INSIGHTS -->",
                        "<!-- INJECT_SCHOOL_SCORES -->", "<!-- INJECT_DEBATE_ROUNDS -->",

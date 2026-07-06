@@ -23,7 +23,15 @@ from .score import score_part2, score_part3, score_part4
 from .synthesize import synthesize_and_render
 
 
-_EMPTY_PANEL = {"investors": [], "panel_consensus": 50, "signal_distribution": {}}
+_EMPTY_PANEL = {
+    "investors": [],
+    "panel_consensus": 50,
+    "signal_distribution": {},
+    # v3.9.1 · 显式标记"用户主动跳过"，与 run_real_test.stage1 的精简模式对齐；
+    # assemble_report / self_review 据此走精简分支而不误判 critical。
+    "panel_skipped": True,
+    "panel_skip_reason": "用户选择不跑大佬 panel（世纪分歧/评委打分/群聊/抄作业）",
+}
 
 
 def run_pipeline(ticker: str, resume: bool = True) -> str:

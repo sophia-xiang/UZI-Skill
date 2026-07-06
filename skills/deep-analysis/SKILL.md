@@ -53,7 +53,7 @@ metadata:
 - 大佬 panel = 4 部分：① 世纪分歧 (Great Divide) ② 65 评委打分板 ③ 大佬群聊现场 ④ 大佬抄作业（四派买入区间）
 - 在 `collect_panel_bonus()` 采集 + spawn 评委 role-play **之前**，用 `AskUserQuestion` **只问一次**："要不要跑大佬 panel（世纪分歧 / 评委打分 / 群聊 / 抄作业）？"
   - **要** → 调 `collect_panel_bonus(ticker)` 采集 fund_holders/similar_stocks → spawn sub-agent role-play → 写 agent_analysis.json 的 panel 相关字段 → 出含 panel 的完整报告
-  - **不要** → 跳过这 4 部分，直接用 stage1 数据出报告（22 维深度卡 + 估值建模照常，仅不含 panel 四块）；agent_analysis.json 仍写 dim_commentary（数据驱动），但不写 great_divide_override / panel_insights / buy_zones
+  - **不要** → ① 覆盖 `panel.json` 为精简标记（`panel_skipped:true`，否则 stage1 留下的 66 位骨架分仍会被渲染成 03/JURY + 04/CHAT——详见"你的分析环节"的代码）；② agent_analysis.json 仍写 dim_commentary（数据驱动），但不写 great_divide_override / panel_insights / buy_zones。然后 stage2 出精简报告（22 维深度卡 + 估值建模照常，panel 区显示"已跳过"）
 - 问过这一次后，panel 内部 4 部分**不再分别确认**，一次点头全跑完
 
 **C. 仅在真正上下文不确定时才问（保留）**
@@ -503,7 +503,18 @@ Stage 1 自动完成：Task 1（22 维采集）→ Task 1.5（机构建模）→
 > **"要不要跑大佬 panel（世纪分歧 / 65 评委打分 / 大佬群聊 / 大佬抄作业）？"**
 >
 > - **用户要** → 执行下方完整的 panel 流程（collect_panel_bonus + role-play + agent_analysis 全字段），下面的 HARD-GATE 生效。
-> - **用户不要** → 跳过 panel role-play，仅写 dim_commentary（数据驱动定性评语）后直接 stage2 出报告；报告不含 panel 四块，其余 22 维深度卡 + 估值建模照常。此时下面的 HARD-GATE 中第 2/3 步和 panel 相关字段豁免。
+> - **用户不要** → 必须做两件事，否则报告仍会渲染 stage1 留下的机械骨架分（v3.9.1 修复的坑）：
+>   1. **覆盖 panel.json 为精简标记**（关键！stage1 已写入 66 位骨架分，不覆盖则报告照样渲染 03/JURY + 04/CHAT）：
+>      ```python
+>      from lib.cache import write_task_output
+>      write_task_output("<ticker>", "panel", {
+>          "investors": [], "panel_consensus": 50, "signal_distribution": {},
+>          "panel_skipped": True, "panel_skip_reason": "用户选择不跑大佬 panel"
+>      })
+>      ```
+>      （或在跑 stage1 **之前**就 `os.environ["UZI_SKIP_PANEL"]="1"`，stage1 会自动写精简 panel，无需事后覆盖。）
+>   2. 写 `agent_analysis.json`：只需 `dim_commentary`（数据驱动定性评语）+ `agent_reviewed:true`，**不要**写 great_divide_override / panel_insights / buy_zones。
+>   然后直接 `stage2()`。报告走精简模式（panel 区显示"精简模式 · 大佬分析模块已跳过"），22 维深度卡 + 估值建模照常。下面的 HARD-GATE 第 2/3 步与 panel 字段全部豁免。
 
 <HARD-GATE>
 **仅当用户在上面选择了"要大佬 panel"时**，Do NOT run stage2() until ALL of the following are complete:
