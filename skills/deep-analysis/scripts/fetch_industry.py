@@ -85,13 +85,28 @@ def _sw_industry_metrics(industry_name: str) -> dict:
         name_col = next((c for c in df.columns if "名称" in c), None)
         if not name_col:
             return {}
-        names = df[name_col].astype(str)
+        parent_col = next((c for c in df.columns if "上级" in c), None)
         row = None
+        # 先精确匹配二级行业名
         for _, r in df.iterrows():
-            n = str(r[name_col])
-            if industry_name in n or n in industry_name or industry_name[:2] in n:
+            n = str(r[name_col]).replace("Ⅱ", "")
+            if industry_name == n or industry_name in n or n in industry_name:
                 row = r
                 break
+        # 再匹配上级行业（一级→二级，取第一个子行业）
+        if row is None and parent_col:
+            for _, r in df.iterrows():
+                p = str(r[parent_col])
+                if industry_name in p or p in industry_name:
+                    row = r
+                    break
+        # 最后 fuzzy：前两字
+        if row is None:
+            for _, r in df.iterrows():
+                n = str(r[name_col]).replace("Ⅱ", "")
+                if industry_name[:2] in n:
+                    row = r
+                    break
         if row is None:
             return {}
         pe_col = next((c for c in df.columns if "市盈率" in c), None)

@@ -117,44 +117,41 @@ def main(ticker: str) -> dict:
         if biz:
             downstream = biz[:80]
 
-        # 上游：从产品类型和经营范围推断原材料/供应商方向
-        # 常见上游关键词映射
-        _UPSTREAM_HINTS = {
-            "港口": "航运公司、进出口贸易商、物流企业",
-            "航运": "造船厂、燃油供应商、港口服务",
-            "建筑": "水泥/钢材/砂石供应商、劳务分包商",
-            "房地产": "建材供应商、建筑承包商、设计院",
-            "汽车": "零部件供应商、钢铁/铝材、电子元器件",
-            "电池": "正极/负极/电解液/隔膜材料供应商",
-            "半导体": "晶圆代工、光刻机、EDA 工具、材料",
-            "医药": "原料药供应商、CRO/CDMO、包装材料",
-            "白酒": "粮食采购、包装材料、物流",
-            "光伏": "硅料/硅片/电池片供应商",
-            "钢铁": "铁矿石/焦炭供应商",
-            "煤炭": "采矿设备、运输物流",
-            "银行": "央行/同业资金、存款客户",
-            "保险": "再保险公司、精算/IT 服务商",
-            "电力": "煤炭/天然气供应商、设备制造商",
-            "食品": "农产品原料供应商、包装材料",
-            "家电": "面板/压缩机/芯片供应商",
-            "通信": "光纤光缆、基站设备、芯片供应商",
-            "计算机": "芯片/存储/服务器供应商",
-        }
-        combined = f"{biz} {prod} {scope}"
-        for hint_key, hint_val in _UPSTREAM_HINTS.items():
-            if hint_key in combined:
-                upstream = hint_val
-                break
-
-        # 如果没匹配到，尝试 CHAIN_TEMPLATES（基于行业名）
-        if upstream == "—":
-            _industry = _get_cached_industry(ti)
-            tmpl = resolve_chain_template(_industry)
-            if tmpl:
-                upstream = tmpl["upstream"]
-                if downstream == "—" or downstream == biz[:80]:
-                    downstream = tmpl["downstream"]
-            elif scope:
+        # 优先级 1: CHAIN_TEMPLATES（基于行业名，精确度最高）
+        _industry = _get_cached_industry(ti)
+        tmpl = resolve_chain_template(_industry)
+        if tmpl:
+            upstream = tmpl["upstream"]
+            downstream = tmpl["downstream"]
+        else:
+            # 优先级 2: 关键词匹配（兜底）
+            _UPSTREAM_HINTS = {
+                "港口": "航运公司、进出口贸易商、物流企业",
+                "航运": "造船厂、燃油供应商、港口服务",
+                "汽车": "零部件供应商、钢铁/铝材、电子元器件",
+                "电池": "正极/负极/电解液/隔膜材料供应商",
+                "半导体": "晶圆代工、光刻机、EDA 工具、材料",
+                "医药": "原料药供应商、CRO/CDMO、包装材料",
+                "白酒": "粮食采购、包装材料、物流",
+                "光伏": "硅料/硅片/电池片供应商",
+                "钢铁": "铁矿石/焦炭供应商",
+                "煤炭": "采矿设备、运输物流",
+                "银行": "央行/同业资金、存款客户",
+                "保险": "再保险公司、精算/IT 服务商",
+                "电力": "煤炭/天然气供应商、设备制造商",
+                "食品": "农产品原料供应商、包装材料",
+                "家电": "面板/压缩机/芯片供应商",
+                "通信": "光纤光缆、基站设备、芯片供应商",
+                "计算机": "芯片/存储/服务器供应商",
+                "房地产": "建材供应商、建筑承包商、设计院",
+                "建筑": "水泥/钢材/砂石供应商、劳务分包商",
+            }
+            combined = f"{biz} {prod} {scope}"
+            for hint_key, hint_val in _UPSTREAM_HINTS.items():
+                if hint_key in combined:
+                    upstream = hint_val
+                    break
+            if upstream == "—" and scope:
                 upstream = f"(从经营范围推断) {scope[:80]}"
 
     # 绝对兜底：ths_zyjs 全挂时也尝试 CHAIN_TEMPLATES

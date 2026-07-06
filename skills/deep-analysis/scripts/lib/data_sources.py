@@ -597,11 +597,32 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
         except Exception as e:
             out["_sina_err"] = str(e)
 
-    # LAST RESORT 1: industry lookup from known map (critical for downstream fetchers)
-    # This covers the case where ALL realtime APIs failed but we still need to know
-    # the industry to make industry/materials/futures fetchers work.
+    # LAST RESORT 1a: 申万行业硬映射（精确度最高）
     if not out.get("industry"):
-        out["industry"] = _known_stock_industry(ti.code)
+        known = _known_stock_industry(ti.code)
+        if known:
+            out["industry"] = known
+            _append_fallback_snap(out, "field:known_industry")
+
+    # LAST RESORT 1b: baostock 行业查询（VPN 下 100% 稳定，返回证监会分类）
+    if not out.get("industry") and bs:
+        try:
+            global _bs_logged_in
+            if not _bs_logged_in:
+                bs.login()
+                _bs_logged_in = True
+            bs_code = f"sh.{ti.code}" if ti.full.endswith("SH") else f"sz.{ti.code}"
+            rs = bs.query_stock_industry(code=bs_code)
+            if rs.error_code == "0" and rs.next():
+                row = rs.get_row_data()
+                ind_raw = row[3] if len(row) > 3 else ""
+                import re as _re
+                ind_clean = _re.sub(r"^[A-Z]\d{1,2}", "", ind_raw).strip()
+                if ind_clean:
+                    out["industry"] = ind_clean
+                    _append_fallback_snap(out, "field:baostock_industry")
+        except Exception:
+            pass
 
     # LAST RESORT 2: PE/PB from baidu gushitong (works when xueqiu/tencent/eastmoney all blocked)
     if not out.get("pe_ttm"):
@@ -710,6 +731,11 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
 # Hardcoded industry map for common A-share stocks (used as last-resort fallback
 # when all realtime APIs fail). Updated periodically from 申万/中证 classifications.
 _STOCK_INDUSTRY_MAP: dict[str, str] = {
+    # 有色金属 / 矿业
+    "601899": "贵金属", "600489": "贵金属", "600547": "工业金属",
+    "603993": "工业金属", "601600": "工业金属", "000807": "工业金属",
+    "600362": "工业金属", "002460": "能源金属", "002466": "能源金属",
+    "600711": "能源金属", "600259": "工业金属", "000630": "工业金属",
     # 光学光电子
     "002273": "光学光电子", "002281": "光学光电子", "300433": "光学光电子",
     "688127": "光学光电子", "002456": "光学光电子", "603501": "光学光电子",
