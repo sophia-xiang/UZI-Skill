@@ -1,9 +1,11 @@
-"""pipeline.run · 编排入口 · collect → score → panel → synthesize → render.
+"""pipeline.run · 编排入口 · collect → score → synthesize → render.
 
 **v3.0.0 默认路径**：`run.py <ticker>` 默认走这里。`UZI_LEGACY=1` 才走 legacy.
 
-Part 1 始终自动执行。Part 2/3/4 各自独立询问是否启动。
-设置 UZI_AUTO_FULL=1 跳过所有询问一把跑完。
+Part 1（数据采集 + 打分 + 基础报告）始终自动执行。
+大佬分析模块（世纪分歧/评委打分板/大佬群聊/大佬抄作业）需询问后才启动。
+UZI_AUTO_FULL=1 跳过询问直接全跑。
+UZI_SKIP_PANEL=1 强制跳过大佬模块。
 
 用法：
     from lib.pipeline.run import run_pipeline
@@ -21,31 +23,18 @@ from .score import score_part2, score_part3, score_part4
 from .synthesize import synthesize_and_render
 
 
-def _ask(part_label: str) -> bool:
-    """交互环境下询问是否执行某阶段；非交互默认拒绝。"""
-    if os.environ.get("UZI_AUTO_FULL") == "1":
-        return True
-    if not sys.stdin.isatty():
-        return False
-    try:
-        choice = input(f"是否执行 {part_label}？(y/N): ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        choice = ""
-    return choice in ("y", "yes")
+_EMPTY_PANEL = {"investors": [], "panel_consensus": 50, "signal_distribution": {}}
 
 
-def run_pipeline(ticker: str, resume: bool = True) -> str | None:
+def run_pipeline(ticker: str, resume: bool = True) -> str:
     """完整管道入口.
 
-    Part 1 始终执行，Part 2/3/4 逐个询问。
-    UZI_AUTO_FULL=1 跳过询问直接全跑。
-
     Returns:
-        HTML 报告路径（全部完成时）· 否则 None.
+        HTML 报告路径.
     """
     _preflight_guards(ticker)
 
-    # ── Part 1 · 22 维数据采集（始终自动执行）──
+    # ── Part 1 · 22 维数据采集 ──
     print(f"🚀 [pipeline] Part 1 · 数据采集 · {ticker}")
     raw_previous = _load_cache(ticker) if resume else {}
     raw_dict = pipeline_collect(ticker, raw_previous=raw_previous, max_workers=6)
@@ -67,31 +56,64 @@ def run_pipeline(ticker: str, resume: bool = True) -> str | None:
             raw_data_compatible[k] = raw_dict[k]
 
     _write_cache(ticker, raw_data_compatible)
-    print(f"✅ [pipeline] Part 1 完成 · raw_data.json 已写入\n")
+    print(f"✅ [pipeline] Part 1 完成 · raw_data.json 已写入")
 
-    # ── Part 2 · 22 维打分 + 定性判断 ──
-    if not _ask("Part 2 · 22 维打分 + 定性判断"):
-        print("   ⏸️  停在 Part 1")
-        return None
-    print(f"🔢 [pipeline] Part 2 · 22 维打分")
+    # ── 22 维打分（始终执行，耗时短）──
+    print(f"\n🔢 [pipeline] 22 维打分")
     score_part2(ticker)
-    print(f"✅ [pipeline] Part 2 完成 · dimensions.json 已写入\n")
 
-    # ── Part 3 · 65 评委量化审判 ──
-    if not _ask("Part 3 · 65 评委量化审判"):
-        print("   ⏸️  停在 Part 2")
-        return None
-    print(f"⚖️  [pipeline] Part 3 · 65 评委审判")
-    score_part3(ticker)
-    print(f"✅ [pipeline] Part 3 完成 · panel.json 已写入\n")
+    # ── 大佬分析模块询问 ──
+    include_panel = _should_include_panel()
+    if include_panel:
+        print(f"\n⚖️  [pipeline] 65 评委量化审判")
+        score_part3(ticker)
+    else:
+        print(f"\n⏭️  [pipeline] 跳过大佬分析模块 · 生成精简报告")
+        _write_empty_panel(ticker)
 
-    # ── Part 4 · 综合研判 + 报告组装 ──
-    if not _ask("Part 4 · 综合研判 + 报告组装"):
-        print("   ⏸️  停在 Part 3")
-        return None
-    print(f"📊 [pipeline] Part 4 · 综合研判 + 报告")
+    # ── 综合研判 + 报告 ──
+    print(f"\n📊 [pipeline] 综合研判 + 报告")
     score_part4(ticker)
     return synthesize_and_render(ticker)
+
+
+def _should_include_panel() -> bool:
+    """判断是否启动大佬分析模块."""
+    if os.environ.get("UZI_SKIP_PANEL") == "1":
+        return False
+    if os.environ.get("UZI_AUTO_FULL") == "1":
+        return True
+    if not sys.stdin.isatty():
+        return False
+    try:
+        print()
+        print("━" * 50)
+        print("📋 是否启动大佬分析模块？")
+        print("   · 世纪分歧（Great Divide 多空辩论）")
+        print("   · 评委打分板（65 位投资大佬评分）")
+        print("   · 大佬群聊现场（群贤议事厅）")
+        print("   · 大佬抄作业（基金经理持仓）")
+        print("   跳过可节省大量时间和 token")
+        print("━" * 50)
+        choice = input("启动？(y/N): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        choice = ""
+    return choice in ("y", "yes")
+
+
+def _write_empty_panel(ticker: str) -> None:
+    """写空 panel.json 供后续 synthesis 和 report 使用."""
+    cache = _cache_dir(ticker)
+    (cache / "panel.json").write_text(
+        json.dumps(_EMPTY_PANEL, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _cache_dir(ticker: str) -> Path:
+    from lib.market_router import parse_ticker
+    ti = parse_ticker(ticker)
+    import run_real_test as rrt
+    return Path(rrt.__file__).parent / ".cache" / ti.full
 
 
 def _preflight_guards(ticker: str) -> None:
@@ -115,10 +137,7 @@ def _preflight_guards(ticker: str) -> None:
 
 def _load_cache(ticker: str) -> dict:
     """读已有 raw_data.json · 用于 resume."""
-    from lib.market_router import parse_ticker
-    ti = parse_ticker(ticker)
-    import run_real_test as rrt
-    cache_path = Path(rrt.__file__).parent / ".cache" / ti.full / "raw_data.json"
+    cache_path = _cache_dir(ticker) / "raw_data.json"
     if not cache_path.exists():
         return {}
     try:
@@ -129,13 +148,11 @@ def _load_cache(ticker: str) -> dict:
 
 def _write_cache(ticker: str, raw: dict) -> None:
     """写 raw_data.json."""
-    from lib.market_router import parse_ticker
-    ti = parse_ticker(ticker)
-    import run_real_test as rrt
-    cache_dir = Path(rrt.__file__).parent / ".cache" / ti.full
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "raw_data.json"
+    cache = _cache_dir(ticker)
+    cache.mkdir(parents=True, exist_ok=True)
     try:
-        cache_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        (cache / "raw_data.json").write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+        )
     except Exception as e:
         print(f"   ⚠️ 写 cache 失败: {e}")

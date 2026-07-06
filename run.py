@@ -430,18 +430,14 @@ def main():
     #   - pipeline 异常 → 自动回退 legacy · 绝不中断业务
     # 原 UZI_PIPELINE=1 仍兼容接受（无操作 · 同默认）
     _pipeline_succeeded = False
-    _pipeline_data_only = False  # Part 1 完成但用户未继续 Part 2-4
     _force_legacy = os.environ.get("UZI_LEGACY") == "1"
     _pipeline_requested = not _force_legacy
     if _pipeline_requested:
         try:
             from lib.pipeline.run import run_pipeline
             print("🚀 [run.py] v3.0.0 pipeline · 默认路径")
-            result = run_pipeline(args.ticker, resume=not args.no_resume)
-            if result is None:
-                _pipeline_data_only = True
-            else:
-                _pipeline_succeeded = True
+            run_pipeline(args.ticker, resume=not args.no_resume)
+            _pipeline_succeeded = True
         except Exception as e:
             print(f"⚠️  [run.py] pipeline 异常 · 回退 legacy: {type(e).__name__}: {str(e)[:100]}")
             import traceback
@@ -452,12 +448,7 @@ def main():
 
     # v2.3 · 先过 stage1，捕获中文名解析失败场景，不静默跑出空报告
     from lib.market_router import is_chinese_name
-    if _pipeline_data_only:
-        print("   → 已完成已确认的阶段 · 后续阶段可按需启动")
-        print(f"   → 缓存位于 .cache/{args.ticker}/")
-        print(f"   → 设置 UZI_AUTO_FULL=1 可一把跑完全部 Part 1-4")
-        sys.exit(0)
-    elif _pipeline_succeeded:
+    if _pipeline_succeeded:
         print("   → 走 pipeline · skip legacy stage1/stage2")
     elif is_chinese_name(args.ticker) and not args.force_name:
         stage1_result = _stage1(args.ticker)

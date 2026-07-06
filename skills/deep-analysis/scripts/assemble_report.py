@@ -471,71 +471,76 @@ def assemble(ticker: str) -> Path:
     for k, v in replacements.items():
         template = template.replace(k, str(v))
 
-    template = template.replace(
-        "<!-- INJECT_JURY_SEATS -->",
-        "\n".join(render_jury_seat(i) for i in investors),
-    )
-    template = template.replace(
-        "<!-- INJECT_CHAT_MESSAGES -->",
-        "\n".join(render_chat_message(i) for i in chat_ordered),
-    )
-    template = template.replace(
-        "<!-- INJECT_VOTE_BARS -->",
-        render_vote_bars(panel.get("vote_distribution") or {}),
-    )
-    template = template.replace(
-        "<!-- INJECT_TOP3_BULLS -->",
-        render_top3_bulls(investors),
-    )
-    # v2.9.1 · 对称补 Top 3 看空 + panel_insights 评委汇总
-    template = template.replace(
-        "<!-- INJECT_TOP3_BEARS -->",
-        render_top3_bears(investors),
-    )
-    template = template.replace(
-        "<!-- INJECT_PANEL_INSIGHTS -->",
-        render_panel_insights(syn, panel),
-    )
-    # v2.15.4 · 按流派打分卡片（7 个流派 A-G 各自 consensus/avg/verdict）
-    # 注入在 panel_insights 后 · 若模板尚未含 marker 则追加到 panel_insights 末
-    school_html = render_school_scores(syn, panel)
-    if school_html:
-        if "<!-- INJECT_SCHOOL_SCORES -->" in template:
-            template = template.replace("<!-- INJECT_SCHOOL_SCORES -->", school_html)
-        else:
-            # 兼容旧模板：拼到 panel-insights 后
-            template = template.replace(
-                '</div>\n        <!-- Top 3 Bears',
-                f'</div>\n        {school_html}\n        <!-- Top 3 Bears',
-                1,
-            )
-            # 若旧 anchor 也没命中 · 最后兜底拼到 INJECT_DEBATE_ROUNDS 前
-            if school_html not in template:
+    _has_panel = bool(investors)
+
+    if _has_panel:
+        template = template.replace(
+            "<!-- INJECT_JURY_SEATS -->",
+            "\n".join(render_jury_seat(i) for i in investors),
+        )
+        template = template.replace(
+            "<!-- INJECT_CHAT_MESSAGES -->",
+            "\n".join(render_chat_message(i) for i in chat_ordered),
+        )
+        template = template.replace(
+            "<!-- INJECT_VOTE_BARS -->",
+            render_vote_bars(panel.get("vote_distribution") or {}),
+        )
+        template = template.replace(
+            "<!-- INJECT_TOP3_BULLS -->",
+            render_top3_bulls(investors),
+        )
+        template = template.replace(
+            "<!-- INJECT_TOP3_BEARS -->",
+            render_top3_bears(investors),
+        )
+        template = template.replace(
+            "<!-- INJECT_PANEL_INSIGHTS -->",
+            render_panel_insights(syn, panel),
+        )
+        school_html = render_school_scores(syn, panel)
+        if school_html:
+            if "<!-- INJECT_SCHOOL_SCORES -->" in template:
+                template = template.replace("<!-- INJECT_SCHOOL_SCORES -->", school_html)
+            else:
                 template = template.replace(
-                    "<!-- INJECT_DEBATE_ROUNDS -->",
-                    school_html + "\n<!-- INJECT_DEBATE_ROUNDS -->",
+                    '</div>\n        <!-- Top 3 Bears',
+                    f'</div>\n        {school_html}\n        <!-- Top 3 Bears',
                     1,
                 )
+                if school_html not in template:
+                    template = template.replace(
+                        "<!-- INJECT_DEBATE_ROUNDS -->",
+                        school_html + "\n<!-- INJECT_DEBATE_ROUNDS -->",
+                        1,
+                    )
+        template = template.replace(
+            "<!-- INJECT_DEBATE_ROUNDS -->",
+            render_debate_rounds(debate),
+        )
+        fund_managers = (syn.get("fund_managers") or raw.get("fund_managers") or [])
+        template = template.replace(
+            "<!-- INJECT_FUND_MANAGERS -->",
+            render_fund_managers(fund_managers),
+        )
+    else:
+        _skip_note = '<div style="text-align:center;color:#6b7280;padding:40px 0;font-size:14px;">精简模式 · 大佬分析模块已跳过</div>'
+        for marker in ("<!-- INJECT_JURY_SEATS -->", "<!-- INJECT_CHAT_MESSAGES -->",
+                       "<!-- INJECT_VOTE_BARS -->", "<!-- INJECT_TOP3_BULLS -->",
+                       "<!-- INJECT_TOP3_BEARS -->", "<!-- INJECT_PANEL_INSIGHTS -->",
+                       "<!-- INJECT_SCHOOL_SCORES -->", "<!-- INJECT_DEBATE_ROUNDS -->",
+                       "<!-- INJECT_FUND_MANAGERS -->"):
+            template = template.replace(marker, "")
+
     template = template.replace(
         "<!-- INJECT_RISKS -->",
         render_risks(syn.get("risks") or []),
-    )
-    template = template.replace(
-        "<!-- INJECT_DEBATE_ROUNDS -->",
-        render_debate_rounds(debate),
     )
 
     # Tier 4 友好层
     template = template.replace(
         "<!-- INJECT_FRIENDLY_LAYER -->",
         render_friendly_layer(syn, raw),
-    )
-
-    # 基金经理抄作业面板
-    fund_managers = (syn.get("fund_managers") or raw.get("fund_managers") or [])
-    template = template.replace(
-        "<!-- INJECT_FUND_MANAGERS -->",
-        render_fund_managers(fund_managers),
     )
 
     # 19 维深度数据卡 · 6 大类
