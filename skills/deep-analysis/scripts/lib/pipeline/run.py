@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 from .collect import collect as pipeline_collect
@@ -16,28 +18,22 @@ from .score import score_from_cache
 from .synthesize import synthesize_and_render
 
 
-def run_pipeline(ticker: str, resume: bool = True) -> str:
+def run_pipeline(ticker: str, resume: bool = True) -> str | None:
     """完整管道入口（v3.0.0 主干）.
 
-    1. pipeline.collect · 用 22 BaseFetcher adapter 并发抓数据（max_workers=6）
-    2. 写 .cache/<ticker>/raw_data.json（与 legacy schema 兼容）
-    3. pipeline.score_from_cache · 直接调 rrt 纯函数（score_dimensions / generate_panel /
-       generate_synthesis）· 不再调 stage1（stage1 会重新 collect）
-    4. pipeline.synthesize_and_render · 调 stage2（stage2 只读 cache 不 collect · OK）
+    默认只跑 Part 1（数据采集）· Part 2-4 需用户确认后才执行。
+    设置 UZI_AUTO_FULL=1 跳过确认一把跑完（适合 CI / 快速模式）。
 
-    Phase 6c 升级：score 阶段解耦 legacy stage1 · 不再重复 collect · 省 5-10 min/股.
+    Returns:
+        HTML 报告路径（str）· 如果仅完成 Part 1 返回 None.
     """
-    # v3.0.0 · pre-flight guards · 不兼容场景抛异常让 run.py fallback legacy（legacy 有完整解析）
     _preflight_guards(ticker)
 
-    print(f"🚀 [pipeline.run] collect · {ticker}")
+    # ── Part 1 · 22 维数据采集（始终自动执行）──
+    print(f"🚀 [pipeline.run] Part 1 · 数据采集 · {ticker}")
     raw_previous = _load_cache(ticker) if resume else {}
     raw_dict = pipeline_collect(ticker, raw_previous=raw_previous, max_workers=6)
 
-    # 组装 legacy 兼容 raw_data.json（dimensions + 顶层溢出字段）
-    # v3.7.2 hotfix: 必须保留顶层 market/code/full。否则 US/HK 标的在 self_review/stock_features
-    # 里会因 raw.get("market", "A") 被误判为 A 股，导致雪球/东财/A股龙虎榜等兜底路径乱跑，
-    # 最终出现 NOK 这类 ADR 被当 A 股检查的假缺口。
     from lib.market_router import parse_ticker as _parse_ticker
     _ti = _parse_ticker(ticker)
     _basic = raw_dict.get("0_basic") or {}
@@ -55,28 +51,48 @@ def run_pipeline(ticker: str, resume: bool = True) -> str:
             raw_data_compatible[k] = raw_dict[k]
 
     _write_cache(ticker, raw_data_compatible)
-    print(f"✅ [pipeline.run] raw_data.json 已写 · 进入 scoring 段（v3.0 纯函数编排）")
+    print(f"✅ [pipeline.run] Part 1 完成 · raw_data.json 已写入")
 
-    # pipeline.score_from_cache · 直接调 rrt.score_dimensions/generate_panel/generate_synthesis
-    # 不再走 rrt.stage1（stage1 会重新 collect · 浪费时间）
+    # ── Part 2-4 · 需确认后才执行 ──
+    auto_full = os.environ.get("UZI_AUTO_FULL") == "1"
+    if not auto_full:
+        if sys.stdin.isatty():
+            print()
+            print("━" * 50)
+            print("📋 Part 1 数据采集已完成。后续阶段：")
+            print("   Part 2 · 22 维打分 + 定性判断")
+            print("   Part 3 · 65 评委量化审判")
+            print("   Part 4 · 综合研判 + 报告组装")
+            print("━" * 50)
+            try:
+                choice = input("是否继续执行 Part 2-4？(y/N): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                choice = ""
+            if choice not in ("y", "yes"):
+                print("   ℹ️  仅完成数据采集。Agent 可按需手动启动后续阶段。")
+                return None
+        else:
+            print("   ℹ️  默认仅完成 Part 1 数据采集（设置 UZI_AUTO_FULL=1 自动执行全部）")
+            return None
+
+    # ── Part 2+3 · 打分 + 评委 ──
+    print(f"\n🔢 [pipeline.run] Part 2+3 · scoring + panel")
     score_from_cache(ticker)
+
+    # ── Part 4+5 · 综合研判 + 报告 ──
+    print(f"\n📊 [pipeline.run] Part 4+5 · synthesize + render")
     return synthesize_and_render(ticker)
 
 
 def _preflight_guards(ticker: str) -> None:
-    """v3.0.0 · pipeline 不覆盖的场景 · 抛异常让 run.py 回退 legacy.
-
-    抛 ValueError 触发 fallback（不 crash · run.py catch 后走 legacy stage1 能正常处理）.
-    """
+    """v3.0.0 · pipeline 不覆盖的场景 · 抛异常让 run.py 回退 legacy（legacy 有完整解析）."""
     from lib.market_router import is_chinese_name, parse_ticker, classify_security_type
 
-    # 1. 中文名 · 由 legacy stage1 的 resolve_chinese_name_rich 处理
     if is_chinese_name(ticker):
         raise ValueError(
             f"pipeline: 中文名 {ticker!r} 需 legacy 解析 · fallback"
         )
 
-    # 2. ETF / LOF / 可转债 · legacy stage1 有完整 guidance
     try:
         ti = parse_ticker(ticker)
         if ti.market == "A":
@@ -86,9 +102,9 @@ def _preflight_guards(ticker: str) -> None:
                     f"pipeline: {sec_type} 证券类型需 legacy 处理 · fallback"
                 )
     except ValueError:
-        raise  # 重新抛 · 让 run.py fallback
+        raise
     except Exception:
-        pass  # 其他异常（parse 失败）· 让 pipeline 自己尝试 · 失败后再 fallback
+        pass
 
 
 def _load_cache(ticker: str) -> dict:
