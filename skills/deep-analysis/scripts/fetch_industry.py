@@ -74,6 +74,42 @@ def _best_industry_match(industry: str) -> dict:
     return {}
 
 
+def _sw_industry_metrics(industry_name: str) -> dict:
+    """申万二级行业 PE/PB — VPN 下 100% 稳定的一线源."""
+    if not industry_name or not ak:
+        return {}
+    try:
+        df = ak.sw_index_second_info()
+        if df is None or df.empty:
+            return {}
+        name_col = next((c for c in df.columns if "名称" in c), None)
+        if not name_col:
+            return {}
+        names = df[name_col].astype(str)
+        row = None
+        for _, r in df.iterrows():
+            n = str(r[name_col])
+            if industry_name in n or n in industry_name or industry_name[:2] in n:
+                row = r
+                break
+        if row is None:
+            return {}
+        pe_col = next((c for c in df.columns if "市盈率" in c), None)
+        pb_col = next((c for c in df.columns if "市净率" in c), None)
+        dy_col = next((c for c in df.columns if "股息" in c or "收益率" in c), None)
+        count_col = next((c for c in df.columns if "成份" in c or "个数" in c or "数量" in c), None)
+        return {
+            "industry_name_match": str(row[name_col]),
+            "industry_pe_weighted": float(row[pe_col]) if pe_col and row[pe_col] else None,
+            "industry_pb": float(row[pb_col]) if pb_col and row[pb_col] else None,
+            "dividend_yield": float(row[dy_col]) if dy_col and row[dy_col] else None,
+            "company_count": int(row[count_col]) if count_col and row[count_col] else None,
+            "source": "sw_index_second_info",
+        }
+    except Exception:
+        return {}
+
+
 def _cninfo_industry_metrics(industry_name: str) -> dict:
     """Pull industry aggregated PE from cninfo — works on this network."""
     if not industry_name:
@@ -224,8 +260,10 @@ def main(industry: str) -> dict:
     else:
         dynamic = {} if est else _dynamic_industry_overview(industry)
 
-    # Get cninfo aggregated metrics
-    cninfo_metrics = _cninfo_industry_metrics(industry)
+    # 一线源：申万（VPN 稳定）→ 二线源：cninfo
+    cninfo_metrics = _sw_industry_metrics(industry)
+    if not cninfo_metrics:
+        cninfo_metrics = _cninfo_industry_metrics(industry)
 
     # 合并：硬编码优先，没有则走动态启发 + 真实 snippets
     # v2.12.1 · penetration 补 dynamic 兜底（原版遗漏）

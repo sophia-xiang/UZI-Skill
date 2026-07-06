@@ -21,6 +21,50 @@ def _float(v, default=0.0):
         return default
 
 
+def _fetch_peers_baidu(codes: list[str]) -> dict[str, dict]:
+    """百度估值 — VPN 下稳定 · 逐票拿 PE/PB."""
+    if not ak:
+        return {}
+    result = {}
+    for code in codes[:10]:
+        try:
+            df_pe = ak.stock_zh_valuation_baidu(symbol=code, indicator="市盈率(TTM)", period="近一年")
+            df_pb = ak.stock_zh_valuation_baidu(symbol=code, indicator="市净率", period="近一年")
+            pe = float(df_pe.iloc[-1]["value"]) if df_pe is not None and not df_pe.empty else 0
+            pb = float(df_pb.iloc[-1]["value"]) if df_pb is not None and not df_pb.empty else 0
+            result[code] = {"pe": pe, "pb": pb}
+        except Exception:
+            pass
+    return result
+
+
+def _direct_push2_board(industry: str, session) -> list[dict] | None:
+    """直连 push2 拉行业板块成分 · 带浏览器头绕反爬."""
+    try:
+        url = "https://82.push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": 1, "pz": 30, "po": 1, "np": 1, "fltt": 2,
+            "invt": 2, "fid": "f3", "fs": f"b:{industry}",
+            "fields": "f12,f14,f2,f9,f23,f20",
+        }
+        r = session.get(url, params=params, timeout=15)
+        data = (r.json() or {}).get("data") or {}
+        diffs = data.get("diff") or []
+        rows = []
+        for d in diffs:
+            rows.append({
+                "代码": str(d.get("f12", "")),
+                "名称": str(d.get("f14", "")),
+                "最新价": d.get("f2"),
+                "市盈率-动态": d.get("f9"),
+                "市净率": d.get("f23"),
+                "总市值": d.get("f20"),
+            })
+        return rows if rows else None
+    except Exception:
+        return None
+
+
 def _build_self_only_table(ti, basic: dict) -> tuple[list, list]:
     """v2.12.1 · Tier 4 兜底：只返回公司自己一行，agent 可识别需外部补同行数据."""
     self_row = {
@@ -152,6 +196,22 @@ def main(ticker: str) -> dict:
                     source_used += " (retry)"
             except Exception as e:
                 peers_raw.append({"tier": 2, "error": f"{type(e).__name__}: {str(e)[:200]}"})
+
+        # ─── Tier 2.5: 直连 push2 + cn_session（绕 akshare 反爬）───
+        if not peer_table:
+            try:
+                from lib.net_session import cn_session
+                session = cn_session()
+                rows = _direct_push2_board(industry, session)
+                if rows:
+                    import pandas as pd
+                    df = pd.DataFrame(rows)
+                    peers_raw, peer_table, peer_comparison = _parse_peer_df(df, ti.code)
+                    fallback_used = True
+                    fallback_reason = "akshare 失败 · direct push2+cn_session 成功"
+                    source_used = "direct_push2:board_industry"
+            except Exception as e:
+                peers_raw.append({"tier": "2.5", "error": f"{type(e).__name__}: {str(e)[:200]}"})
 
         # ─── Tier 3: 雪球 Playwright 登录兜底（用户 opt-in） ───
         if not peer_table:

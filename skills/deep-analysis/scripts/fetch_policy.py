@@ -16,10 +16,17 @@ def _fetch_cfachina_titles(limit: int = 15) -> list[dict]:
     抓回来做 13_policy 的监管信号（期货 / 衍生品 industry 尤其相关）.
     """
     try:
-        import requests
-        r = requests.get(
+        try:
+            from lib.net_session import cn_session
+            _s = cn_session()
+        except ImportError:
+            import requests
+            _s = requests.Session()
+            _s.trust_env = False
+            _s.proxies = {"http": None, "https": None}
+            _s.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+        r = _s.get(
             "http://www.cfachina.org/",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"},
             timeout=12,
         )
         if r.status_code != 200:

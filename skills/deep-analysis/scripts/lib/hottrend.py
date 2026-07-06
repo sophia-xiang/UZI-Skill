@@ -26,6 +26,11 @@ from typing import Callable
 
 import requests
 
+try:
+    from .net_session import cn_session as _cn_session
+except ImportError:
+    _cn_session = None
+
 # ─── 配置 ────────────────────────────────────────────────────────────
 
 HTTP_TIMEOUT = int(os.environ.get("UZI_HTTP_TIMEOUT", "20"))
@@ -124,7 +129,9 @@ def _http_json(url: str, ua: str = UA_PC, extra_headers: dict | None = None) -> 
     if extra_headers:
         headers.update(extra_headers)
     try:
-        r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        s = _cn_session() if _cn_session else requests.Session()
+        s.headers.update(headers)
+        r = s.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return None
         return r.json()

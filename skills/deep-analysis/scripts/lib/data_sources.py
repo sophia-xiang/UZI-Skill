@@ -45,6 +45,22 @@ try:
 except ImportError:
     requests = None
 
+try:
+    from .net_session import cn_session as _cn_session
+except ImportError:
+    _cn_session = None
+
+def _get_cn_session():
+    """获取国内直连 session（绕过 VPN 代理）."""
+    if _cn_session:
+        return _cn_session()
+    s = requests.Session()
+    s.trust_env = False
+    s.proxies = {"http": None, "https": None}
+    s.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    s.headers["Referer"] = "https://quote.eastmoney.com/"
+    return s
+
 
 # ─────────────────────────────────────────────────────────────
 # v2.6 · Tencent qt 通用价格兜底 — 适用于 A/H/U 三市场，简洁稳定
@@ -70,7 +86,8 @@ def _fetch_price_tencent_qt(market: str, code_raw: str) -> dict:
         return {}
     url = f"https://qt.gtimg.cn/q={symbol}"
     try:
-        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        s = _get_cn_session()
+        r = s.get(url, timeout=8)
         if r.status_code != 200:
             return {}
         text = r.content.decode("gbk", errors="replace")
@@ -478,7 +495,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
                 "fields": "f43,f44,f45,f46,f47,f48,f50,f57,f58,f116,f117,f162,f164",
                 "ut": "fa5fd1943c7b386f172d6893dbfba10b",
             }
-            r = requests.get(url, params=params, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            r = _get_cn_session().get(url, params=params, timeout=8)
             data = (r.json() or {}).get("data") or {}
             if data:
                 scale = 100.0
@@ -501,7 +518,7 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
         try:
             prefix = "sh" if ti.full.endswith("SH") else "sz"
             url = f"http://qt.gtimg.cn/q={prefix}{ti.code}"
-            r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            r = _get_cn_session().get(url, timeout=10)
             # Response: v_sz002273="51~水晶光电~002273~29.93~29.18~29.20~...";
             text = r.text
             if "~" in text:
@@ -557,7 +574,9 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
         try:
             prefix = "sh" if ti.full.endswith("SH") else "sz"
             url = f"http://hq.sinajs.cn/list={prefix}{ti.code}"
-            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"})
+            _s = _get_cn_session()
+            _s.headers["Referer"] = "https://finance.sina.com.cn"
+            r = _s.get(url, timeout=8)
             text = r.text
             start = text.find('"') + 1
             end = text.rfind('"')
@@ -943,7 +962,7 @@ def _kline_a_share_chain(ti: TickerInfo, period: str, start: str, adjust: str) -
                 "fields1": "f1,f2,f3,f4,f5,f6", "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                 "klt": "101", "fqt": "1" if adjust == "qfq" else "0", "lmt": "500",
             }
-            r = requests.get(url, params=params, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            r = _get_cn_session().get(url, params=params, timeout=12)
             data = r.json().get("data") or {}
             klines = data.get("klines") or []
             rows = []
@@ -966,7 +985,7 @@ def _kline_a_share_chain(ti: TickerInfo, period: str, start: str, adjust: str) -
             sina_sym = ("sh" if ti.full.endswith("SH") else "sz") + code
             url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
             params = {"symbol": sina_sym, "scale": "240", "ma": "no", "datalen": "500"}
-            r = requests.get(url, params=params, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            r = _get_cn_session().get(url, params=params, timeout=12)
             data = r.json() if r.text and r.text != "null" else []
             rows = []
             for d in data:
@@ -986,7 +1005,7 @@ def _kline_a_share_chain(ti: TickerInfo, period: str, start: str, adjust: str) -
             tx_sym = ("sh" if ti.full.endswith("SH") else "sz") + code
             url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
             params = {"param": f"{tx_sym},day,,,500,qfq"}
-            r = requests.get(url, params=params, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            r = _get_cn_session().get(url, params=params, timeout=12)
             payload = r.json().get("data", {}).get(tx_sym, {})
             klines = payload.get("qfqday") or payload.get("day") or []
             rows = []

@@ -6,6 +6,21 @@ import sys
 
 import akshare as ak  # type: ignore
 from lib.market_router import parse_ticker
+from lib.industry_mapping import resolve_chain_template
+
+
+def _get_cached_industry(ti) -> str | None:
+    """从已有 raw_data.json 读 industry（fetch_basic 先于 fetch_chain 执行）."""
+    try:
+        from pathlib import Path
+        cache = Path(__file__).parent / ".cache" / ti.full / "raw_data.json"
+        if cache.exists():
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            basic = (data.get("dimensions") or {}).get("0_basic") or {}
+            return basic.get("industry") or basic.get("sw_industry")
+    except Exception:
+        pass
+    return None
 
 
 def _float(v) -> float:
@@ -131,9 +146,24 @@ def main(ticker: str) -> dict:
                 upstream = hint_val
                 break
 
-        # 如果没匹配到，尝试从经营范围提取
-        if upstream == "—" and scope:
-            upstream = f"(从经营范围推断) {scope[:80]}"
+        # 如果没匹配到，尝试 CHAIN_TEMPLATES（基于行业名）
+        if upstream == "—":
+            _industry = _get_cached_industry(ti)
+            tmpl = resolve_chain_template(_industry)
+            if tmpl:
+                upstream = tmpl["upstream"]
+                if downstream == "—" or downstream == biz[:80]:
+                    downstream = tmpl["downstream"]
+            elif scope:
+                upstream = f"(从经营范围推断) {scope[:80]}"
+
+    # 绝对兜底：ths_zyjs 全挂时也尝试 CHAIN_TEMPLATES
+    if upstream == "—" and downstream == "—":
+        _industry = _get_cached_industry(ti)
+        tmpl = resolve_chain_template(_industry)
+        if tmpl:
+            upstream = tmpl["upstream"]
+            downstream = tmpl["downstream"]
 
     return {
         "ticker": ti.full,

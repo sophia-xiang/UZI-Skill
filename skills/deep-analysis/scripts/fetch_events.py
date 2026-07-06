@@ -22,6 +22,13 @@ def _cninfo_direct_api(code: str, page_size: int = 30, timeout: int = 15) -> lis
         list of {date, title, url, type} dicts. Empty list on failure.
     """
     import requests
+    try:
+        from lib.net_session import cn_session as _cn_s
+        _session = _cn_s()
+    except ImportError:
+        _session = requests.Session()
+        _session.trust_env = False
+        _session.proxies = {"http": None, "https": None}
     # 推断板块：000/001/002/300 → szse · 600/601/603/605/688 → sse
     code_prefix = code[:3]
     if code_prefix in ("000", "001", "002") or code.startswith("3"):
@@ -61,7 +68,7 @@ def _cninfo_direct_api(code: str, page_size: int = 30, timeout: int = 15) -> lis
         "isHLtitle": "true",
     }
     try:
-        r = requests.post(url, data=payload, headers=headers, timeout=timeout)
+        r = _session.post(url, data=payload, headers=headers, timeout=timeout)
         if r.status_code != 200:
             return []
         data = r.json()

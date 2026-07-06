@@ -28,8 +28,24 @@ except ImportError:
     requests = None
     _REQ_OK = False
 
+try:
+    from lib.net_session import cn_session as _cn_session
+except ImportError:
+    _cn_session = None
 
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+
+
+def _get_cn():
+    """国内直连 session."""
+    if _cn_session:
+        return _cn_session()
+    s = requests.Session()
+    s.trust_env = False
+    s.proxies = {"http": None, "https": None}
+    s.headers["User-Agent"] = _UA
+    s.headers["Referer"] = "https://quote.eastmoney.com/"
+    return s
 
 
 class _DirectHttpProvider:
@@ -70,7 +86,8 @@ class _DirectHttpProvider:
 
         url = f"http://qt.gtimg.cn/q={qt_code}"
         try:
-            r = requests.get(url, headers={"User-Agent": _UA}, timeout=8)
+            s = _get_cn()
+            r = s.get(url, timeout=8)
             r.encoding = "gbk"
             text = r.text.strip()
         except Exception as e:
@@ -123,10 +140,9 @@ class _DirectHttpProvider:
 
         url = f"http://hq.sinajs.cn/list={sina_code}"
         try:
-            r = requests.get(url, headers={
-                "User-Agent": _UA,
-                "Referer": "http://finance.sina.com.cn",
-            }, timeout=8)
+            s = _get_cn()
+            s.headers["Referer"] = "http://finance.sina.com.cn"
+            r = s.get(url, timeout=8)
             r.encoding = "gbk"
             text = r.text.strip()
         except Exception as e:
@@ -193,7 +209,7 @@ class _DirectHttpProvider:
         code5 = code.zfill(5).lstrip("0") or "0"  # etnet 不要前导 0
         url = f"https://www.etnet.com.hk/www/tc/stocks/realtime/quote.php?code={code5}"
         try:
-            r = requests.get(url, headers={"User-Agent": _UA}, timeout=10)
+            r = requests.get(url, headers={"User-Agent": _UA}, timeout=10)  # etnet 是港股源，不走 cn_session
         except Exception as e:
             raise ProviderError(f"etnet: {type(e).__name__}: {e}")
 

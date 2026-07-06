@@ -23,6 +23,11 @@ from pathlib import Path
 
 import requests
 
+try:
+    from .net_session import cn_session as _cn_session
+except ImportError:
+    _cn_session = None
+
 HTTP_TIMEOUT = int(os.environ.get("UZI_HTTP_TIMEOUT", "20"))
 CACHE_TTL_SEC = 600  # 10 min
 
@@ -78,7 +83,9 @@ def _cache_set(key: str, items: list) -> None:
 
 def _http_get(url: str, timeout: int = HTTP_TIMEOUT) -> str | None:
     try:
-        r = requests.get(url, headers={"User-Agent": UA_PC}, timeout=timeout)
+        s = _cn_session() if _cn_session else requests.Session()
+        s.headers["User-Agent"] = UA_PC
+        r = s.get(url, timeout=timeout)
         if r.status_code != 200:
             return None
         r.encoding = r.apparent_encoding or "utf-8"

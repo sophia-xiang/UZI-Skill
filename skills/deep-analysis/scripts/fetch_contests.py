@@ -31,6 +31,19 @@ from typing import Any
 
 import requests  # type: ignore
 
+try:
+    from lib.net_session import cn_session as _cn_session
+except ImportError:
+    _cn_session = None
+
+def _get_cn():
+    if _cn_session:
+        return _cn_session()
+    s = requests.Session()
+    s.trust_env = False
+    s.proxies = {"http": None, "https": None}
+    return s
+
 from lib.cache import cached
 from lib.market_router import parse_ticker
 
@@ -137,7 +150,9 @@ def fetch_tgb_mentions(ti) -> list[dict]:
     url = f"https://www.taoguba.com.cn/Article/list/all?keyword={code}"
     headers = {"User-Agent": UA}
     try:
-        r = requests.get(url, headers=headers, timeout=15)
+        s = _get_cn()
+        s.headers.update(headers)
+        r = s.get(url, timeout=15)
         if r.status_code != 200:
             return []
         html = r.text
@@ -167,7 +182,9 @@ def fetch_ths_simu(ti) -> list[dict]:
     url = f"https://moni.10jqka.com.cn/holder/?stock={code}"
     headers = {"User-Agent": UA, "Referer": "https://moni.10jqka.com.cn/"}
     try:
-        r = requests.get(url, headers=headers, timeout=12)
+        s = _get_cn()
+        s.headers.update(headers)
+        r = s.get(url, timeout=12)
         if r.status_code != 200 or "Just a moment" in r.text:
             return [{"note": "ths simu endpoint requires login or blocked"}]
         rows = re.findall(r'<a[^>]+class="user[^"]*"[^>]*>([^<]+)</a>.*?(\d+\.\d+)%', r.text)
@@ -183,7 +200,9 @@ def fetch_dpswang(ti) -> list[dict]:
     """大盘手网公开榜单。仅作可达性探测，详细持仓不公开。"""
     url = "https://www.dpswang.com/match/list"
     try:
-        r = requests.get(url, headers={"User-Agent": UA}, timeout=12)
+        s = _get_cn()
+        s.headers["User-Agent"] = UA
+        r = s.get(url, timeout=12)
         if r.status_code != 200:
             return []
         return [{"note": "dpswang reachable, detailed holdings require player-page scrape"}]
