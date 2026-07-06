@@ -762,7 +762,9 @@ def stage2(ticker: str) -> str:
     from inline_assets import main as inline_main
     standalone = inline_main(ti.full)
 
-    if os.environ.get("UZI_NO_PNG") != "1":
+    # v3.9.1 · 跳过大佬 panel 时，分享卡/战报的多空对阵无数据（且已从报告删除）· 一并跳过 PNG
+    _panel_skipped = bool(panel.get("panel_skipped"))
+    if os.environ.get("UZI_NO_PNG") != "1" and not _panel_skipped:
         try:
             from render_share_card import main as render_sc
             render_sc(ti.full)
@@ -775,6 +777,8 @@ def stage2(ticker: str) -> str:
             print(f"  ✓ 战报横图 PNG")
         except Exception as e:
             print(f"  ⚠️ 战报跳过: {e}")
+    elif _panel_skipped:
+        print(f"  ⏭️ 精简模式 · 分享卡/战报 PNG 已跳过（无大佬 panel 数据）")
     else:
         print(f"  ⏭️ PNG 输出已禁用 (UZI_NO_PNG=1)")
 

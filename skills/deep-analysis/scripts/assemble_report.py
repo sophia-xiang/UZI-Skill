@@ -344,6 +344,8 @@ _PANEL_MARKER_PAIRS = (
     ("<!-- PANEL_TOC_START -->", "<!-- PANEL_TOC_END -->"),
     ("<!-- PANEL_A_START -->", "<!-- PANEL_A_END -->"),
     ("<!-- PANEL_B_START -->", "<!-- PANEL_B_END -->"),
+    # 离屏的朋友圈分享卡 + 微信群战报（PNG 截图源）· 跳过 panel 时一并删除，避免 None 泄漏
+    ("<!-- PANEL_CARDS_START -->", "<!-- PANEL_CARDS_END -->"),
 )
 
 
@@ -554,14 +556,12 @@ def assemble(ticker: str) -> Path:
             template = template.replace(_s, "").replace(_e, "")
     else:
         # v3.9.1 · 用户跳过大佬 panel：整块删除 世纪分歧 / 评委打分 / 大佬群聊 / 大佬抄作业
-        # 四个分区 + 左侧 TOC 对应条目，再把剩余分区顺序重新编号（避免空壳分区 + 序号断档）。
+        # 四个分区 + 左侧 TOC 对应条目 + 离屏分享/战报 PNG 卡（VOTE_BARS/TOP3 等 markers 随卡一并删除）。
         for _s, _e in _PANEL_MARKER_PAIRS:
             template = re.sub(re.escape(_s) + r".*?" + re.escape(_e), "", template, flags=re.DOTALL)
-        # 分享卡（sc-* 区）里的投票/最看好 markers 不在删除块内 · 清空避免残留注释
-        for marker in ("<!-- INJECT_VOTE_BARS -->", "<!-- INJECT_TOP3_BULLS -->",
-                       "<!-- INJECT_TOP3_BEARS -->"):
-            template = template.replace(marker, "")
-        template = _renumber_sections_sequential(template)
+
+    # v3.9.1 · 两种模式都顺序重排序号：正常模式修掉 CHAT/LEGENDS 重复的 04，精简模式补齐断档。
+    template = _renumber_sections_sequential(template)
 
     template = template.replace(
         "<!-- INJECT_RISKS -->",
