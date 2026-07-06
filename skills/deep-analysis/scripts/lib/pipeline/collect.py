@@ -30,6 +30,9 @@ from .schema import DimResult, Quality
 # 依赖 0_basic.industry 的 dim · 必须在 wave 3
 DEPENDENT_DIMS = {"3_macro", "7_industry", "9_futures", "13_policy"}
 
+# 仅大佬分析模块需要的 dim · 默认跳过 · 用户确认后单独采集
+PANEL_ONLY_DIMS = {"6_fund_holders"}
+
 # v3.0.0 · mini_racer V8 isolate 非 thread-safe · 这些 legacy fetcher 用 mini_racer
 # 必须串行跑 · 跟 legacy `_MINI_RACER_FETCHERS` 一致
 _MINI_RACER_LEGACY_MODULES = {"fetch_industry", "fetch_capital_flow", "fetch_valuation"}
@@ -82,9 +85,9 @@ def collect(ticker: Any, raw_previous: dict | None = None, max_workers: int = 6)
 
     basic_data = out["0_basic"].get("data") or {}
 
-    # Wave 2 · 非依赖型 fetcher 并发
+    # Wave 2 · 非依赖型 fetcher 并发（排除 PANEL_ONLY_DIMS · 那些在用户确认后单独采集）
     non_dep_dims = [d for d in FETCHER_REGISTRY.keys()
-                    if d not in DEPENDENT_DIMS and d != "0_basic"]
+                    if d not in DEPENDENT_DIMS and d != "0_basic" and d not in PANEL_ONLY_DIMS]
     print(f"  [pipeline] wave 2 · {len(non_dep_dims)} fetcher (max_workers={max_workers})")
 
     def _run(dim_key: str) -> tuple[str, dict, dict]:
@@ -205,3 +208,40 @@ def _fetch_with_context(fetcher, ticker, raw_context: dict) -> DimResult:
         latency_ms=int((_time.time() - t0) * 1000),
     )
     return validate_result(dim_result, fetcher.spec)
+
+
+def collect_panel_data(ticker: Any) -> dict[str, Any]:
+    """单独采集大佬分析模块所需数据（fund_holders + similar_stocks）.
+
+    返回 {"6_fund_holders": {...}, "fund_managers": [...], "similar_stocks": [...]}
+    """
+    import importlib
+    out: dict[str, Any] = {}
+    t0 = time.time()
+    print(f"  [pipeline] 大佬模块数据采集 · {ticker}")
+
+    for dim_key in sorted(PANEL_ONLY_DIMS):
+        fetcher = get_fetcher(dim_key)
+        if not fetcher:
+            continue
+        try:
+            result = fetcher.fetch(ticker)
+            out[dim_key] = result.to_dict()
+            for k, v in result.top_level_fields.items():
+                out[k] = v
+            q = (result.to_dict().get("_pipeline") or {}).get("quality", "?")
+            print(f"    ✓ {dim_key:20s} {q}")
+        except Exception as e:
+            print(f"    ✗ {dim_key:20s} {type(e).__name__}: {str(e)[:80]}")
+
+    try:
+        mod = importlib.import_module("fetch_similar_stocks")
+        r = mod.main(ticker, 4)
+        sims = (r.get("data") or {}).get("similar_stocks", []) if isinstance(r, dict) else []
+        out["similar_stocks"] = sims
+        print(f"    ✓ similar_stocks       {len(sims)} peers")
+    except Exception as e:
+        print(f"    ✗ similar_stocks       {type(e).__name__}: {str(e)[:80]}")
+
+    print(f"  [pipeline] 大佬模块数据采集完成 · {time.time()-t0:.1f}s")
+    return out

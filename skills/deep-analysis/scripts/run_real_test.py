@@ -15,6 +15,16 @@ import time
 import traceback
 from pathlib import Path
 
+# === 强制所有 HTTP 请求直连，不走代理 ===
+# 本应用访问的都是国内财经 API（eastmoney/cninfo/sina/ths），走代理反而会被拦截
+os.environ['NO_PROXY'] = '*'
+os.environ['no_proxy'] = '*'
+for _proxy_key in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy',
+                    'ALL_PROXY', 'all_proxy'):
+    os.environ.pop(_proxy_key, None)
+del _proxy_key
+# === 结束 ===
+
 # Force UTF-8 output on Windows GBK consoles
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     try:
@@ -285,10 +295,8 @@ def collect_raw_data(ticker: str, max_workers: int = 12, resume: bool = True) ->
     if skipped_cached:
         print(f"  [resume] 跳过 {len(skipped_cached)} 个已缓存维度: {', '.join(skipped_cached[:5])}{'...' if len(skipped_cached) > 5 else ''}")
 
-    # bonus fetchers (fund_holders, similar_stocks) merged into Wave 2
-    others.append(("fetch_fund_holders", "_bonus_fund_managers", lambda _t, _d: (ticker,)))
-    others.append(("fetch_similar_stocks", "_bonus_similar_stocks", lambda _t, _d: (ticker, 4)))
-    print(f"  [wave 2] {len(others)}/{len(all_others) + 2} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)...")
+    # bonus fetchers (fund_holders, similar_stocks) 已移至 collect_panel_bonus() · 用户确认后才采集
+    print(f"  [wave 2] {len(others)}/{len(all_others)} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)...")
 
     # 长尾 fetcher 给更长 timeout（拉研报 / 拉公告 通常较慢）
     PER_FETCHER_TIMEOUT_OVERRIDES = {
@@ -296,13 +304,8 @@ def collect_raw_data(ticker: str, max_workers: int = 12, resume: bool = True) ->
         "1_financials": 150,  # 多张财报合并
         "10_valuation": 150,  # 历史估值分位计算
         "15_events": 120,     # 公告 + web search
-        "_bonus_fund_managers": 120,
-        "_bonus_similar_stocks": 90,
     }
-    _BONUS_KEY_MAP = {
-        "_bonus_fund_managers": ("fund_managers", lambda r: ((r.get("data") or {}).get("fund_managers", []))),
-        "_bonus_similar_stocks": ("similar_stocks", lambda r: ((r.get("data") or {}).get("similar_stocks", []))),
-    }
+    _BONUS_KEY_MAP = {}
     DEFAULT_PER_FETCHER_TIMEOUT = 90
 
     def _run_one(item):
@@ -465,6 +468,31 @@ def _detect_lite_mode() -> tuple[bool, str]:
     except Exception:
         pass
     return False, "cache 已预热，full mode"
+
+
+def collect_panel_bonus(ticker: str) -> dict:
+    """单独采集大佬分析模块所需数据（fund_holders + similar_stocks）.
+
+    用户确认需要大佬模块后才调用，避免默认流程浪费时间。
+    返回 {"fund_managers": [...], "similar_stocks": [...]}.
+    """
+    result = {}
+    print(f"\n  [大佬模块] 采集 fund_holders + similar_stocks · {ticker}")
+    try:
+        r = run_fetcher("fetch_fund_holders", (ticker,))
+        fm = ((r.get("data") or {}).get("fund_managers", [])) if isinstance(r, dict) else []
+        result["fund_managers"] = fm
+        print(f"    ✓ fund_holders · {len(fm)} managers")
+    except Exception as e:
+        print(f"    ✗ fund_holders · {type(e).__name__}: {str(e)[:80]}")
+    try:
+        r = run_fetcher("fetch_similar_stocks", (ticker, 4))
+        sims = ((r.get("data") or {}).get("similar_stocks", [])) if isinstance(r, dict) else []
+        result["similar_stocks"] = sims
+        print(f"    ✓ similar_stocks · {len(sims)} peers")
+    except Exception as e:
+        print(f"    ✗ similar_stocks · {type(e).__name__}: {str(e)[:80]}")
+    return result
 
 
 def stage1(ticker: str) -> dict:

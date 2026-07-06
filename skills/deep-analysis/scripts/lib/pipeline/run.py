@@ -2,8 +2,8 @@
 
 **v3.0.0 默认路径**：`run.py <ticker>` 默认走这里。`UZI_LEGACY=1` 才走 legacy.
 
-Part 1（数据采集 + 打分 + 基础报告）始终自动执行。
-大佬分析模块（世纪分歧/评委打分板/大佬群聊/大佬抄作业）需询问后才启动。
+Part 1（数据采集 + 打分 + 报告）始终自动执行，但跳过大佬模块数据。
+大佬分析（世纪分歧/评委打分板/大佬群聊/大佬抄作业）需询问后才采集+计算。
 UZI_AUTO_FULL=1 跳过询问直接全跑。
 UZI_SKIP_PANEL=1 强制跳过大佬模块。
 
@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from .collect import collect as pipeline_collect
+from .collect import collect as pipeline_collect, collect_panel_data
 from .score import score_part2, score_part3, score_part4
 from .synthesize import synthesize_and_render
 
@@ -34,7 +34,7 @@ def run_pipeline(ticker: str, resume: bool = True) -> str:
     """
     _preflight_guards(ticker)
 
-    # ── Part 1 · 22 维数据采集 ──
+    # ── Part 1 · 22 维数据采集（不含大佬模块数据）──
     print(f"🚀 [pipeline] Part 1 · 数据采集 · {ticker}")
     raw_previous = _load_cache(ticker) if resume else {}
     raw_dict = pipeline_collect(ticker, raw_previous=raw_previous, max_workers=6)
@@ -65,6 +65,17 @@ def run_pipeline(ticker: str, resume: bool = True) -> str:
     # ── 大佬分析模块询问 ──
     include_panel = _should_include_panel()
     if include_panel:
+        # 采集大佬模块专用数据（fund_holders + similar_stocks）
+        panel_data = collect_panel_data(ticker)
+        # 合并到 raw_data.json
+        raw = _load_raw(ticker)
+        for k, v in panel_data.items():
+            if k in ("fund_managers", "similar_stocks"):
+                raw[k] = v
+            else:
+                raw.setdefault("dimensions", {})[k] = v
+        _write_cache(ticker, raw)
+
         print(f"\n⚖️  [pipeline] 65 评委量化审判")
         score_part3(ticker)
     else:
@@ -88,7 +99,7 @@ def _should_include_panel() -> bool:
     try:
         print()
         print("━" * 50)
-        print("📋 是否启动大佬分析模块？")
+        print("📋 是否启动大佬分析模块？包含：")
         print("   · 世纪分歧（Great Divide 多空辩论）")
         print("   · 评委打分板（65 位投资大佬评分）")
         print("   · 大佬群聊现场（群贤议事厅）")
@@ -102,7 +113,7 @@ def _should_include_panel() -> bool:
 
 
 def _write_empty_panel(ticker: str) -> None:
-    """写空 panel.json 供后续 synthesis 和 report 使用."""
+    """写空 panel.json."""
     cache = _cache_dir(ticker)
     (cache / "panel.json").write_text(
         json.dumps(_EMPTY_PANEL, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -114,6 +125,14 @@ def _cache_dir(ticker: str) -> Path:
     ti = parse_ticker(ticker)
     import run_real_test as rrt
     return Path(rrt.__file__).parent / ".cache" / ti.full
+
+
+def _load_raw(ticker: str) -> dict:
+    """读 raw_data.json."""
+    p = _cache_dir(ticker) / "raw_data.json"
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def _preflight_guards(ticker: str) -> None:
@@ -137,11 +156,11 @@ def _preflight_guards(ticker: str) -> None:
 
 def _load_cache(ticker: str) -> dict:
     """读已有 raw_data.json · 用于 resume."""
-    cache_path = _cache_dir(ticker) / "raw_data.json"
-    if not cache_path.exists():
+    p = _cache_dir(ticker) / "raw_data.json"
+    if not p.exists():
         return {}
     try:
-        return json.loads(cache_path.read_text(encoding="utf-8"))
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
