@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -338,6 +339,28 @@ from lib.report.institutional import (  # noqa: E402, F401
     _render_school_lock_banner,
 )
 
+# v3.9.1 · 跳过大佬 panel 时删除的分区标记（成对包裹 TOC 条目 / 世纪分歧+评委+群聊 / 抄作业）
+_PANEL_MARKER_PAIRS = (
+    ("<!-- PANEL_TOC_START -->", "<!-- PANEL_TOC_END -->"),
+    ("<!-- PANEL_A_START -->", "<!-- PANEL_A_END -->"),
+    ("<!-- PANEL_B_START -->", "<!-- PANEL_B_END -->"),
+)
+
+
+def _renumber_sections_sequential(html: str) -> str:
+    """精简模式删除 panel 分区后，把剩余 section-tag 与 TOC 序号顺序重排为 01,02,03…，避免序号断档。"""
+    sec = [0]
+    def _sec(m):
+        sec[0] += 1
+        return f'<div class="section-tag">{sec[0]:02d}{m.group(1)}</div>'
+    html = re.sub(r'<div class="section-tag">\d+( / [^<]*)</div>', _sec, html)
+    toc = [0]
+    def _toc(m):
+        toc[0] += 1
+        return f'<span class="toc-num">{toc[0]:02d}</span>'
+    html = re.sub(r'<span class="toc-num">\d+</span>', _toc, html)
+    return html
+
 
 def assemble(ticker: str) -> Path:
     syn = read_task_output(ticker, "synthesis")
@@ -438,11 +461,11 @@ def assemble(ticker: str) -> Path:
         # 没选出多空代表，应该显示占位而不是错误的头像+空数据
         "{{BULL_ID}}": _safe(bull.get("investor_id"), "_placeholder"),
         "{{BULL_NAME}}": _safe(bull.get("name"), "（未选出）"),
-        "{{BULL_SCORE}}": str(divide.get("bull_score", 0)),
+        "{{BULL_SCORE}}": str(_safe(divide.get("bull_score"), "—")),
         "{{BULL_LAST_SAY}}": _safe(last_round.get("bull_say"), "—"),
         "{{BEAR_ID}}": _safe(bear.get("investor_id"), "_placeholder"),
         "{{BEAR_NAME}}": _safe(bear.get("name"), "（未选出）"),
-        "{{BEAR_SCORE}}": str(divide.get("bear_score", 0)),
+        "{{BEAR_SCORE}}": str(_safe(divide.get("bear_score"), "—")),
         "{{BEAR_LAST_SAY}}": _safe(last_round.get("bear_say"), "—"),
         "{{PUNCHLINE}}": _safe(divide.get("punchline") or debate.get("punchline")),
         "{{ZONE_VALUE_PRICE}}": str(_safe((zones.get("value") or {}).get("price"))),
@@ -526,17 +549,19 @@ def assemble(ticker: str) -> Path:
             "<!-- INJECT_FUND_MANAGERS -->",
             render_fund_managers(fund_managers),
         )
+        # 有 panel：仅去掉成对分区标记注释，保留内容
+        for _s, _e in _PANEL_MARKER_PAIRS:
+            template = template.replace(_s, "").replace(_e, "")
     else:
-        # v3.9.1 · 精简模式：在主 panel 区注入"已跳过"提示（此前 _skip_note 定义了却没用，
-        # 导致跳过 panel 时只留空壳分区、没有任何说明）。其余 panel 标记清空。
-        _skip_note = '<div style="text-align:center;color:#6b7280;padding:40px 0;font-size:14px;">精简模式 · 大佬分析模块已跳过（世纪分歧 / 评委打分 / 大佬群聊 / 大佬抄作业）</div>'
-        template = template.replace("<!-- INJECT_JURY_SEATS -->", _skip_note)
-        for marker in ("<!-- INJECT_CHAT_MESSAGES -->",
-                       "<!-- INJECT_VOTE_BARS -->", "<!-- INJECT_TOP3_BULLS -->",
-                       "<!-- INJECT_TOP3_BEARS -->", "<!-- INJECT_PANEL_INSIGHTS -->",
-                       "<!-- INJECT_SCHOOL_SCORES -->", "<!-- INJECT_DEBATE_ROUNDS -->",
-                       "<!-- INJECT_FUND_MANAGERS -->"):
+        # v3.9.1 · 用户跳过大佬 panel：整块删除 世纪分歧 / 评委打分 / 大佬群聊 / 大佬抄作业
+        # 四个分区 + 左侧 TOC 对应条目，再把剩余分区顺序重新编号（避免空壳分区 + 序号断档）。
+        for _s, _e in _PANEL_MARKER_PAIRS:
+            template = re.sub(re.escape(_s) + r".*?" + re.escape(_e), "", template, flags=re.DOTALL)
+        # 分享卡（sc-* 区）里的投票/最看好 markers 不在删除块内 · 清空避免残留注释
+        for marker in ("<!-- INJECT_VOTE_BARS -->", "<!-- INJECT_TOP3_BULLS -->",
+                       "<!-- INJECT_TOP3_BEARS -->"):
             template = template.replace(marker, "")
+        template = _renumber_sections_sequential(template)
 
     template = template.replace(
         "<!-- INJECT_RISKS -->",
