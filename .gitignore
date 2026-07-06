@@ -52,3 +52,6 @@ docs/*.local.md
 
 # v2.10.2 · prewarm_cache 生成的预热数据（release 附件，不进 repo）
 skills/deep-analysis/scripts/prewarm/
+
+# 申万二级行业动态映射缓存（sw_industry_map.py 运行时生成，30天刷新）
+**/_sw_industry_map.json

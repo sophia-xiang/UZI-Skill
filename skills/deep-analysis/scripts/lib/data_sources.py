@@ -50,6 +50,12 @@ try:
 except ImportError:
     _cn_session = None
 
+try:
+    from .sw_industry_map import get_sw_industry
+except ImportError:
+    def get_sw_industry(code: str, allow_build: bool = True) -> str | None:  # type: ignore
+        return None
+
 def _get_cn_session():
     """获取国内直连 session（绕过 VPN 代理）."""
     if _cn_session:
@@ -302,10 +308,10 @@ def _ensure_a_share_basic_fields(out: dict, ti: TickerInfo) -> dict:
             out["_field_ak_code_name_err"] = f"{type(e).__name__}: {str(e)[:80]}"
 
     if out.get("industry") in (None, "", "-"):
-        industry = _known_stock_industry(ti.code)
+        industry = get_sw_industry(ti.code)
         if industry:
             out["industry"] = industry
-            _append_fallback_snap(out, "field:known_industry")
+            _append_fallback_snap(out, "field:sw_industry_map")
 
     return out
 
@@ -597,12 +603,15 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
         except Exception as e:
             out["_sina_err"] = str(e)
 
-    # LAST RESORT 1a: 申万行业硬映射（精确度最高）
+    # LAST RESORT 1a: 申万二级行业动态映射（代码→申万口径名，精确度最高）
     if not out.get("industry"):
-        known = _known_stock_industry(ti.code)
-        if known:
-            out["industry"] = known
-            _append_fallback_snap(out, "field:known_industry")
+        try:
+            sw_ind = get_sw_industry(ti.code)
+            if sw_ind:
+                out["industry"] = sw_ind
+                _append_fallback_snap(out, "field:sw_industry_map")
+        except Exception:
+            pass
 
     # LAST RESORT 1b: baostock 行业查询（VPN 下 100% 稳定，返回证监会分类）
     if not out.get("industry") and bs:
@@ -726,71 +735,6 @@ def _fetch_basic_a(ti: TickerInfo) -> dict:
 
     _ensure_a_share_basic_fields(out, ti)
     return out
-
-
-# Hardcoded industry map for common A-share stocks (used as last-resort fallback
-# when all realtime APIs fail). Updated periodically from 申万/中证 classifications.
-_STOCK_INDUSTRY_MAP: dict[str, str] = {
-    # 有色金属 / 矿业
-    "601899": "贵金属", "600489": "贵金属", "600547": "工业金属",
-    "603993": "工业金属", "601600": "工业金属", "000807": "工业金属",
-    "600362": "工业金属", "002460": "能源金属", "002466": "能源金属",
-    "600711": "能源金属", "600259": "工业金属", "000630": "工业金属",
-    # 光学光电子
-    "002273": "光学光电子", "002281": "光学光电子", "300433": "光学光电子",
-    "688127": "光学光电子", "002456": "光学光电子", "603501": "光学光电子",
-    # 白酒
-    "600519": "白酒", "000858": "白酒", "000568": "白酒", "002304": "白酒",
-    "600809": "白酒", "600779": "白酒", "000799": "白酒",
-    # 半导体
-    "688981": "半导体", "603986": "半导体", "002371": "半导体", "002129": "半导体",
-    "300782": "半导体", "688012": "半导体", "688008": "半导体", "688536": "半导体",
-    # 新能源 / 电池
-    "300750": "电池", "002594": "汽车整车", "300014": "电池", "002460": "电池",
-    "300207": "电池", "300124": "电池", "300919": "电池",
-    # AI / 算力
-    "300308": "光模块", "300394": "光模块", "300502": "光模块", "002463": "光模块",
-    # 医药生物
-    "300760": "医药生物", "600276": "医药生物", "603259": "医药生物", "600196": "医药生物",
-    # 消费电子
-    "002475": "消费电子", "002241": "消费电子", "002938": "消费电子",
-    # 银行
-    "601398": "银行", "601939": "银行", "601288": "银行", "600036": "银行",
-    "601166": "银行", "000001": "银行",
-    # 保险
-    "601318": "保险", "601601": "保险", "601628": "保险", "601336": "保险",
-    # 证券
-    "600030": "证券", "601688": "证券", "000776": "证券",
-    # 房地产
-    "000002": "房地产", "600048": "房地产", "001979": "房地产",
-    # 钢铁
-    "600019": "钢铁", "600808": "钢铁", "000898": "钢铁",
-    # 家电
-    "000333": "家电", "000651": "家电", "600690": "家电",
-    # 食品饮料
-    "600887": "食品饮料", "603288": "食品饮料",
-    # 港口
-    "000582": "港口", "601018": "港口", "600017": "港口", "600018": "港口",
-    "000905": "港口", "601298": "港口", "000507": "港口",
-    # 交通运输
-    "601006": "交通运输", "600009": "交通运输", "601111": "交通运输",
-    # 航运
-    "601866": "航运", "601872": "航运", "600026": "航运", "601880": "航运",
-    # 建筑
-    "601668": "建筑装饰", "601186": "建筑装饰", "002051": "建筑装饰",
-    # 电力
-    "600900": "电力", "601985": "电力", "600886": "电力",
-    # 煤炭
-    "601088": "煤炭", "600188": "煤炭", "601898": "煤炭",
-    # 军工
-    "600893": "军工", "000768": "军工", "601989": "军工",
-    # 汽车
-    "600104": "汽车", "601238": "汽车", "000625": "汽车",
-}
-
-
-def _known_stock_industry(code: str) -> str | None:
-    return _STOCK_INDUSTRY_MAP.get(code)
 
 
 def _fetch_basic_hk(ti: TickerInfo) -> dict:
