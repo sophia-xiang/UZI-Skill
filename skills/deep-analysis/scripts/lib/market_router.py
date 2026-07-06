@@ -26,6 +26,12 @@ _RE_A_FULL = re.compile(r"^(\d{6})\.(SZ|SH|BJ)$", re.I)
 _RE_HK = re.compile(r"^(\d{4,5})(?:\.HK)?$", re.I)
 _RE_US = re.compile(r"^[A-Z][A-Z\.\-]{0,5}$")
 
+# v3.9.x · 从混合输入"名称+代码"中抽取内嵌 ticker（search 而非 match）
+_RE_EMBED_A_FULL = re.compile(r"(\d{6})\.(SZ|SH|BJ)", re.I)  # 000975.SZ
+_RE_EMBED_HK = re.compile(r"(\d{4,5})\.HK", re.I)             # 00700.HK
+_RE_EMBED_A6 = re.compile(r"(?<!\d)(\d{6})(?!\d)")           # 裸 6 位 A 码
+_RE_EMBED_HK45 = re.compile(r"(?<!\d)(\d{4,5})(?!\d)")       # 裸 4-5 位 → HK
+
 
 # ═══════════════════════════════════════════════════════════════
 # v2.9.2 · 完整的 6 位码分类（之前只看前 2 位，漏了一大片）
@@ -169,6 +175,30 @@ def _is_mutual_fund_code(code6: str) -> bool:
     return code6 in _MUTUAL_FUND_CODE_CACHE
 
 
+def extract_ticker_code(raw: str) -> str | None:
+    """从混合输入（名称+代码，如 '山金国际 000975' / '小米集团 01810'）中抽取股票代码。
+
+    有 ticker 时优先返回代码，不把名称和代码绑在一起。优先级：
+      完整 A 码(带 SZ/SH/BJ) → HK 带 .HK → 裸 6 位 A 码 → 裸 4-5 位(判 HK)
+    纯名称（无任何数字代码，如 '水晶光电'）或纯字母(US, 如 'AAPL') 返回 None。
+    返回值可直接喂给 parse_ticker。
+    """
+    s = raw.strip().upper().replace(" ", "")
+    m = _RE_EMBED_A_FULL.search(s)
+    if m:
+        return f"{m.group(1)}.{m.group(2).upper()}"
+    m = _RE_EMBED_HK.search(s)
+    if m:
+        return f"{m.group(1)}.HK"
+    m = _RE_EMBED_A6.search(s)
+    if m:
+        return m.group(1)
+    m = _RE_EMBED_HK45.search(s)
+    if m:
+        return f"{m.group(1)}.HK"
+    return None
+
+
 def parse_ticker(raw: str) -> TickerInfo:
     """Best-effort parse. For Chinese names (e.g. '水晶光电'), caller must resolve via fetch_basic first."""
     s = raw.strip().upper().replace(" ", "")
@@ -182,8 +212,11 @@ def parse_ticker(raw: str) -> TickerInfo:
         return TickerInfo(raw=raw, code=s, full=f"{s}.{suffix}", market="A")
 
     if s.endswith(".HK"):
-        code = s.removesuffix(".HK").lstrip("0") or "0"
-        return TickerInfo(raw=raw, code=code, full=f"{code.zfill(5)}.HK", market="H")
+        base = s.removesuffix(".HK")
+        # v3.9.x · 校验 .HK 前缀是纯数字，否则（如 "腾讯控股00700.HK"）交给下方内嵌抽取
+        if base.isdigit():
+            code = base.lstrip("0") or "0"
+            return TickerInfo(raw=raw, code=code, full=f"{code.zfill(5)}.HK", market="H")
 
     # v2.10.2 · 3-位数纯数字（如 "700"/"981"）A 股不存在，走 HK
     # 原逻辑：_RE_A_NUMERIC 要求 6 位，_RE_HK 匹配 4-5 位 → "700" 3 位都不匹配
@@ -198,7 +231,21 @@ def parse_ticker(raw: str) -> TickerInfo:
     if _RE_US.match(s):
         return TickerInfo(raw=raw, code=s, full=s, market="U")
 
-    # Unrecognized — likely a Chinese name. Caller must resolve.
+    # v3.9.x · 混合输入"名称+代码"（如 "山金国际 000975"）：有 ticker 优先抽取，
+    # 不把名称和代码整体当 code。保留原始 raw。
+    embedded = extract_ticker_code(raw)
+    if embedded:
+        es = embedded.upper()
+        m2 = _RE_A_FULL.match(es)
+        if m2:
+            return TickerInfo(raw=raw, code=m2.group(1), full=f"{m2.group(1)}.{m2.group(2).upper()}", market="A")
+        if es.endswith(".HK"):
+            base = es.removesuffix(".HK")
+            return TickerInfo(raw=raw, code=base.lstrip("0") or "0", full=f"{base.zfill(5)}.HK", market="H")
+        if _RE_A_NUMERIC.match(es):
+            return TickerInfo(raw=raw, code=es, full=f"{es}.{_a_share_suffix(es)}", market="A")
+
+    # Unrecognized — likely a pure Chinese name. Caller must resolve.
     return TickerInfo(raw=raw, code=raw, full=raw, market="A")
 
 

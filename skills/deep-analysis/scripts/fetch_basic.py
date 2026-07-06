@@ -13,7 +13,7 @@ import json
 import sys
 
 from lib import data_sources as ds
-from lib.market_router import is_chinese_name, parse_ticker, classify_security_type
+from lib.market_router import is_chinese_name, parse_ticker, classify_security_type, extract_ticker_code
 
 
 _NON_STOCK_GUIDANCE = {
@@ -41,7 +41,10 @@ _NON_STOCK_GUIDANCE = {
 
 
 def main(user_input: str) -> dict:
-    if is_chinese_name(user_input):
+    # v3.9.x · 有 ticker 优先：即便输入含中文名，只要能抽出股票代码就直接用代码，
+    # 不走名称解析（避免 "山金国际 000975" 被整体当作名称/代码，抓取 URL 变成
+    # xueqiu.com/S/山金国际 000975 这类无效链接）。纯名称才做名称解析。
+    if extract_ticker_code(user_input) is None and is_chinese_name(user_input):
         r = ds.resolve_chinese_name_rich(user_input)
         if r["resolved"] is None:
             # Ambiguous or unresolvable — surface candidates for UI confirmation.
